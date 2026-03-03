@@ -94,9 +94,6 @@ protected:
   FourVector<unsigned int>          fRopTpc;                ///< # TPC planes for each (cry, apa, rop, rpl)
   FourVector<unsigned int>          fRopPlane;              ///< # TPC plane index for each (cry, apa, rop, rpl)
 
-
-
-  
 };
 }
 
@@ -130,12 +127,24 @@ DuneApaWireReadoutGeom()
     fRopTpc[icry].resize(napa);                TLOG()<<"Initialize fRopTpc["<<icry<<"].resize("<<napa<<")";
     fRopPlane[icry].resize(napa);              TLOG()<<"Initialize fRopPlane["<<icry<<"].resize("<<napa<<")";
     for ( Index itpc=0; itpc<ntpc; ++itpc ) {
-      Index npla = 3; // U, V, Z
+      Index npla = 3; /* U, V, Z */            TLOG()<<"npla="<<npla;
       fAnchoredWires[icry][itpc].resize(npla, 0);
       fWiresPerPlane[icry][itpc].resize(npla, 0);
       for ( Index ipla=0; ipla<npla; ++ipla ) {
         Index nwir = 0;//Nwires({tpcid, ipla});
+	if      (itpc==0 && ipla==0) nwir = 316;
+	else if (itpc==0 && ipla==1) nwir = 315;
+	else if (itpc==0 && ipla==2) nwir = 240;
+	else if (itpc==1 && ipla==0) nwir = 316;
+	else if (itpc==1 && ipla==1) nwir = 315;
+	else if (itpc==1 && ipla==2) nwir = 240;
+	else {
+	  TLOG()<<"icry="<<icry<<" itpc="<<itpc<<" ipla="<<ipla<<" nwir="<<nwir;
+	  TLOG_ERROR() << "unexpected cryo, tpc, and/or plane";
+	  exit(1);
+	}
         fWiresPerPlane[icry][itpc][ipla] = nwir;
+	TLOG()<<"fWiresPerPlane[icry="<<icry<<"][itpc="<<itpc<<"][ipla="<<ipla<<"]="<<nwir;
       }
     }
     Index itpc = 0;
@@ -181,11 +190,45 @@ DuneApaWireReadoutGeom()
         Index nrpl = fPlanesPerRop[icry][iapa][irop];
         fFirstChannelInThisRop[icry][iapa][irop] = icha;
         for ( Index irpl=0; irpl!=nrpl; ++irpl ) {
-	  Index itpc = fRopTpc[icry][iapa][irop][irpl];
+	  Index itpc = fRopTpc[icry][iapa][irop][irpl];            TLOG()<<"itpc="<<itpc;
 	  Index ipla = fRopPlane[icry][iapa][irop][irpl];
+	  const Vector<View_t> eview = {geo::kU, geo::kV, geo::kZ};
+	  View_t view=eview[ipla];
+	  TLOG_DEBUG(3)<<"icry="<<icry<<" iapa="<<iapa<<" irop="<<irop<<" irpl="<<irpl<<" view="<<view<<" eview[ipla]="<<eview[ipla];
+	  //...
 	  Index nAnchoredWires = 0;  // # wires from this TPC plane contributing to the ROP
+	  Index nwir = fWiresPerPlane[icry][itpc][ipla];
+	  if ( view == geo::kZ ) {
+	    nAnchoredWires = nwir;
+	    TLOG()<<"InitializeA nAnchoredWires="<<nAnchoredWires;
+          // Induction planes.
+          } else {
+# if 0
+            for ( unsigned int iwir=0; iwir+1<nwir; ++iwir ) {
+              auto const xyz = plageo.Wire(iwir).GetCenter();
+              auto const xyz_next = plageo.Wire(iwir+1).GetCenter();
+              if ( xyz.Z() == xyz_next.Z() ) {
+                nAnchoredWires = iwir;
+		TLOG()<<"InitializeB nAnchoredWires="<<nAnchoredWires;
+                break;
+              }
+            }
+# endif
+	    TLOG_DEBUG(6)<<"InitializeC nAnchoredWires="<<nAnchoredWires;
+          }
+	  // Tom Junk: a hack for iceberg geometry -- the assumption that Z doesnt change for a wire center in common wires
+	  // in the code above calculating nAnchoredWires doesn't work for iceberg and nAnchoredWires ends up being zero.
+	  // Put some conditions in here so it is unlikely to be triggered in non-Iceberg cases
+	  // if nAnchordWires == 0 subsequent code will crash on an integer divide by zero
+
+	  TLOG_DEBUG() << "nAnchoredWires="<<nAnchoredWires<<" nwir="<<nwir<<" view="<<view;
+	  if (nAnchoredWires == 0 && nwir >310 && nwir < 320 && view != geo::kZ) {
+	    nAnchoredWires = 200;
+	    TLOG_DEBUG(5)<<"setting nAnchoredWires = 200";
+	  }
 	  
-	  fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG()<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
+          fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG()<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
+
           icha += nAnchoredWires;
         }
         fFirstChannelInNextRop[icry][iapa][irop] = icha;
@@ -216,16 +259,17 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
   bool found = false;
   for ( icry=0; icry<ncry; ++icry ) {
     Index napa = fNApa[icry];
-    TLOG_DEBUG() << "icha="<<icha<<" napa="<<napa<<" fNApa.size()="<<fNApa.size();
+    TLOG_DEBUG(0) << "icha="<<icha<<" napa="<<napa<<" fNApa.size()="<<fNApa.size();
     for ( iapa=0; iapa<napa; ++iapa ) {
       Index nrop = fRopsPerApa[icry][iapa];
       for ( irop=0; irop<nrop; ++irop ) {
         Index icha1 = fFirstChannelInThisRop[icry][iapa][irop];
         Index icha2 = fFirstChannelInNextRop[icry][iapa][irop];
         found = icha >= icha1 && icha < icha2;
-	TLOG_DEBUG(1) << "found="<<found<<" icha1="<<icha1<<" icha2="<<icha2;
+	TLOG_DEBUG(1) << "found="<<found<<" icry="<<icry<<" iapa="<<iapa<<" irop="<<irop<<" icha1="<<icha1<<" icha2="<<icha2;
         if ( found ) {
           ichaRop = icha - icha1;
+	  TLOG_DEBUG(2)<<"found! ichaRop="<<ichaRop;
           break;
         }
       }
@@ -239,33 +283,22 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
   }
   // Extract TPC(s) from ROP
   Index nrpl = fPlanesPerRop[icry][iapa][irop];
-  if ( nrpl == 0 ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": No TPC planes.";
-    exit (1);
-  }
-  if ( nrpl > 2 ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": Too many TPC planes.";
-    exit (1);
-  }
+  if ( nrpl == 0 ) { TLOG_ERROR() << __func__ << ": No TPC planes."; exit (1); }
+  if ( nrpl > 2 ) { TLOG_ERROR() << __func__ << ": Too many TPC planes."; exit (1); }
   Index itpc1 = fRopTpc[icry][iapa][irop][0];
   Index ipla = fRopPlane[icry][iapa][irop][0];
   Index itpc2 = (nrpl > 1 ) ? fRopTpc[icry][iapa][irop][1] : itpc1;
   Index nAnchored = fAnchoredWires[icry][itpc1][ipla];
   bool wrapped = ipla < 2;
-  if ( wrapped && itpc2 == itpc1 ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": 2nd plane not found for wrapped ROP";
-    exit (1);
-  }
-  if ( wrapped && ipla != fRopPlane[icry][iapa][irop][1] ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": Wrapped planes have inconsistent indices.";
-    exit (1);
-  }
+  TLOG_DEBUG(3) << "wrapped="<<wrapped;
+  if ( wrapped && itpc2 == itpc1 )
+    { TLOG_ERROR() << __func__ << ": 2nd plane not found for wrapped ROP"; exit (1); }
+  if ( wrapped && ipla != fRopPlane[icry][iapa][irop][1] )
+    { TLOG_ERROR() << __func__ << ": Wrapped planes have inconsistent indices."; exit (1); }
   // For now, assume the second TPC plane has the same # anchored wires.
   // Code will need some work if we want to relax this assumption.
-  if (  wrapped && fAnchoredWires[icry][itpc2][ipla] != nAnchored ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": Planes have inconsistent anchor counts.";
-    exit (1);
-  }
+  if (  wrapped && fAnchoredWires[icry][itpc2][ipla] != nAnchored )
+    { TLOG_ERROR() << __func__ << ": Planes have inconsistent anchor counts."; exit (1); }
   // If this is a wrapped ROP and the wire number is larger than nAnchored, then
   // the first wire for this channel is in the other TPC plane.
   Index itpc = itpc1;
@@ -275,18 +308,18 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
     iwir -= nAnchored;
   }
   if ( iwir >= nAnchored ) {
-    TLOG_ERROR("DuneApaWireReadoutGeom") << __func__ << ": Invalid channel: iwir =" << iwir;
-    exit (1);
+    TLOG_ERROR() << __func__ << ": Invalid channel: iwir =" << iwir; exit (1);
   }
   // Loop over wires and create IDs.
   while ( iwir < fWiresPerPlane[icry][itpc][ipla] ) {
     WireID wirid(icry, itpc, ipla, iwir);
-    TLOG_DEBUG(2)<<"icha="<<icha<<" pushing: "<<wirid;
+    TLOG_DEBUG(4)<<"icha="<<icha<<" pushing: "<<wirid<<" fWiresPerPlane[icry][itpc][ipla]="<<fWiresPerPlane[icry][itpc][ipla];
     wirids.push_back(wirid);
     iwir += fAnchoredWires[icry][itpc][ipla];
     itpc = (itpc == itpc1) ? itpc2 : itpc1;
+    TLOG_DEBUG(5)<<"end-of-while iwir="<<iwir<<" itpc="<<itpc<<" fWiresPerPlane="<<fWiresPerPlane[icry][itpc][ipla];
   }
-  TLOG_DEBUG_SCOPED(3) {
+  TLOG_DEBUG_SCOPED(6) {
     TLOG_ADD << "icha="<<icha<<" return wirids.size()="<<wirids.size()<<" [0]="<<wirids[0];
     if (wirids.size()>1) TLOG_ADD << " [1]="<<wirids[1];
   }
