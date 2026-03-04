@@ -144,7 +144,7 @@ DuneApaWireReadoutGeom()
 	  exit(1);
 	}
         fWiresPerPlane[icry][itpc][ipla] = nwir;
-	TLOG_DEBUG(1)<<"fWiresPerPlane[icry="<<icry<<"][itpc="<<itpc<<"][ipla="<<ipla<<"]="<<nwir;
+	TLOG_DEBUG(11)<<"fWiresPerPlane[icry="<<icry<<"][itpc="<<itpc<<"][ipla="<<ipla<<"]="<<nwir;
       }
     }
     Index itpc = 0;
@@ -200,7 +200,7 @@ DuneApaWireReadoutGeom()
 	  Index nwir = fWiresPerPlane[icry][itpc][ipla];
 	  if ( view == geo::kZ ) {
 	    nAnchoredWires = nwir;
-	    TLOG_DEBUG(1)<<"InitializeA nAnchoredWires="<<nAnchoredWires;
+	    TLOG_DEBUG(12)<<"InitializeA nAnchoredWires="<<nAnchoredWires;
           // Induction planes.
           } else {
 # if 0
@@ -209,12 +209,12 @@ DuneApaWireReadoutGeom()
               auto const xyz_next = plageo.Wire(iwir+1).GetCenter();
               if ( xyz.Z() == xyz_next.Z() ) {
                 nAnchoredWires = iwir;
-		TLOG_DEBUG(1)<<"InitializeB nAnchoredWires="<<nAnchoredWires;
+		TLOG_DEBUG(12)<<"InitializeB nAnchoredWires="<<nAnchoredWires;
                 break;
               }
             }
 # endif
-	    TLOG_DEBUG(6)<<"InitializeC nAnchoredWires="<<nAnchoredWires;
+	    TLOG_DEBUG(12)<<"InitializeC nAnchoredWires="<<nAnchoredWires;
           }
 	  // Tom Junk: a hack for iceberg geometry -- the assumption that Z doesnt change for a wire center in common wires
 	  // in the code above calculating nAnchoredWires doesn't work for iceberg and nAnchoredWires ends up being zero.
@@ -224,10 +224,10 @@ DuneApaWireReadoutGeom()
 	  TLOG_DEBUG() << "nAnchoredWires="<<nAnchoredWires<<" nwir="<<nwir<<" view="<<view;
 	  if (nAnchoredWires == 0 && nwir >310 && nwir < 320 && view != geo::kZ) {
 	    nAnchoredWires = 200;
-	    TLOG_DEBUG(5)<<"setting nAnchoredWires = 200";
+	    TLOG_DEBUG(12)<<"setting nAnchoredWires = 200";
 	  }
 	  
-          fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG_DEBUG(1)<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
+          fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG_DEBUG(12)<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
 
           icha += nAnchoredWires;
         }
@@ -313,11 +313,11 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
   // Loop over wires and create IDs.
   while ( iwir < fWiresPerPlane[icry][itpc][ipla] ) {
     WireID wirid(icry, itpc, ipla, iwir);
-    TLOG_DEBUG(4)<<"icha="<<icha<<" pushing: "<<wirid<<" fWiresPerPlane[icry][itpc][ipla]="<<fWiresPerPlane[icry][itpc][ipla];
+    TLOG_DEBUG(13)<<"icha="<<icha<<" pushing: "<<wirid<<" fWiresPerPlane[icry][itpc][ipla]="<<fWiresPerPlane[icry][itpc][ipla];
     wirids.push_back(wirid);
     iwir += fAnchoredWires[icry][itpc][ipla];
     itpc = (itpc == itpc1) ? itpc2 : itpc1;
-    TLOG_DEBUG(5)<<"end-of-while iwir="<<iwir<<" itpc="<<itpc<<" fWiresPerPlane="<<fWiresPerPlane[icry][itpc][ipla];
+    TLOG_DEBUG(13)<<"end-of-while iwir="<<iwir<<" itpc="<<itpc<<" fWiresPerPlane="<<fWiresPerPlane[icry][itpc][ipla];
   }
   TLOG_DEBUG_SCOPED(6) {
     TLOG_ADD << "icha="<<icha<<" return wirids.size()="<<wirids.size()<<" [0]="<<wirids[0];
@@ -335,35 +335,25 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
 int
 main(int /*argc*/, char** /*argv*/)
 {
-  TRACE(TLVL_INFO, "hello");
+  TRACE(TLVL_DEBUG+1, "hello");
 
   DuneApaWireReadoutGeom  readout{};
 
+  std::string sview = "UVZ";
   for (unsigned int chan=0; chan<1280; ++chan) {
-    //std::string sview = "UVZ";
     //readout::ROPID ropid = wgeom.ChannelToROP(chan);
 
     auto wids = readout.ChannelToWire(chan);   // std::vector<geo::WireID>
-#if 0
-    std::string swids;
-    for ( unsigned int i=0; i<wids.size(); ++i) {
-      if (i==0) {
-	swids = swids + std::to_string(wids[i].Wire) + " (tpc#" + std::to_string(geo::TPCID(wids[i]).TPC) + ")";
-      } else {
-	//swids = swids + ", " + std::to_string(wids[i].Wire);
-	swids = swids + ", " + std::to_string(wids[i].Wire) + " (tpc#" + std::to_string(geo::TPCID(wids[i]).TPC) + ")";
-      }
-    }
-    std::cout << "      channel: " << chan << " in view " << sview << " assoc with wires: " << swids << " in ROP: " << /*ropid.ROP <<*/ std::endl;
-#else
-    TLOG_SCOPED() {
-      TLOG_ADD<<"offline channel="<<chan<<" cryostat="<<wids[0].Cryostat
-	      <<" tpc="<<wids[0].TPC<<" plane="<<wids[0].Plane<<"wire="<<wids[0].Wire;
-      if (wids.size()>1)
-	TLOG_ADD<<" and cryostat="<<wids[0].Cryostat
-		<<" tpc="<<wids[0].TPC<<" plane="<<wids[0].Plane<<"wire="<<wids[0].Wire;
-    }
-#endif
+
+    if (wids.size()==1)
+      TLOG()<<"offline channel="<<chan
+	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
+	    <<" image="<<(wids[0].TPC + wids[0].Plane*2);
+    if (wids.size()>1)
+      TLOG()<<"offline channel="<<chan
+	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
+	    <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire="<<wids[1].Wire
+	    <<" images="<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
   } // for all channels
   return 0;
 }
