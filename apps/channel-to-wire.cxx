@@ -327,6 +327,11 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
 }
 
 
+
+
+
+
+
 int
 main(int /*argc*/, char** /*argv*/)
 {
@@ -334,8 +339,22 @@ main(int /*argc*/, char** /*argv*/)
 
   DuneApaWireReadoutGeom  readout{};
 
-  auto wire = readout.ChannelToWire(0);
+  for (unsigned int chan=0; chan<1280; ++chan) {
+    std::string sview = "UVZ";
+    //readout::ROPID ropid = wgeom.ChannelToROP(chan);
 
-  TLOG() << "wire[0]=" << wire[1];
+    auto wids = readout.ChannelToWire(chan);   // std::vector<geo::WireID>
+    std::string swids;
+    for ( unsigned int i=0; i<wids.size(); ++i) {
+      if (i==0) {
+	swids = swids + std::to_string(wids[i].Wire) + " (tpc#" + std::to_string(geo::TPCID(wids[i]).TPC) + ")";
+      } else {
+	//swids = swids + ", " + std::to_string(wids[i].Wire);
+	swids = swids + ", " + std::to_string(wids[i].Wire) + " (tpc#" + std::to_string(geo::TPCID(wids[i]).TPC) + ")";
+      }
+    }
+    std::cout << "      channel: " << chan << " in view " << sview << " assoc with wires: " << swids << " in ROP: " << /*ropid.ROP <<*/ std::endl;
+
+  }
   return 0;
 }
