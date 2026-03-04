@@ -104,30 +104,30 @@ DuneApaWireReadoutGeom()
 {
   Index ncry = 1;
   fNchannels = 1280;
-  fNcryostat = ncry;                   TLOG()<<"Initialize fNcryostat = "<<ncry;
-  fNApa.resize(ncry);                  TLOG()<<"Initialize fNApa.resize("<<ncry<<")";
+  fNcryostat = ncry;                   TLOG_DEBUG(1)<<"Initialize fNcryostat = "<<ncry;
+  fNApa.resize(ncry);                  TLOG_DEBUG(1)<<"Initialize fNApa.resize("<<ncry<<")";
   fWiresPerPlane.resize(ncry);
-  fAnchoredWires.resize(ncry);         TLOG()<<"Initialize fAnchoredWires.resize("<<ncry<<")";
-  fFirstChannelInThisRop.resize(ncry); TLOG()<<"Initialize fFirstChannelInThisRop.resize("<<ncry<<")";
-  fFirstChannelInNextRop.resize(ncry); TLOG()<<"Initialize fFirstChannelInNextRop.resize("<<ncry<<")";
-  fRopsPerApa.resize(ncry);            TLOG()<<"Initialize fRopsPerApa.resize("<<ncry<<")";
-  fPlanesPerRop.resize(ncry);          TLOG()<<"Initialize fPlanesPerRop.resize("<<ncry<<")";
-  fRopTpc.resize(ncry);                TLOG()<<"Initialize fRopTpc.resize("<<ncry<<")";
-  fRopPlane.resize(ncry);              TLOG()<<"Initialize fRopPlane.resize("<<ncry<<")";
+  fAnchoredWires.resize(ncry);         TLOG_DEBUG(1)<<"Initialize fAnchoredWires.resize("<<ncry<<")";
+  fFirstChannelInThisRop.resize(ncry); TLOG_DEBUG(1)<<"Initialize fFirstChannelInThisRop.resize("<<ncry<<")";
+  fFirstChannelInNextRop.resize(ncry); TLOG_DEBUG(1)<<"Initialize fFirstChannelInNextRop.resize("<<ncry<<")";
+  fRopsPerApa.resize(ncry);            TLOG_DEBUG(1)<<"Initialize fRopsPerApa.resize("<<ncry<<")";
+  fPlanesPerRop.resize(ncry);          TLOG_DEBUG(1)<<"Initialize fPlanesPerRop.resize("<<ncry<<")";
+  fRopTpc.resize(ncry);                TLOG_DEBUG(1)<<"Initialize fRopTpc.resize("<<ncry<<")";
+  fRopPlane.resize(ncry);              TLOG_DEBUG(1)<<"Initialize fRopPlane.resize("<<ncry<<")";
   for ( Index icry=0; icry<ncry; ++icry) {
     Index ntpc = 2;
     Index napa = ntpc/2;  // Assume 1 APA for every two TPCs
-    fNApa[icry] = napa;                        TLOG()<<"Initialize fNApa["<<icry<<"] = "<<napa;
+    fNApa[icry] = napa;                        TLOG_DEBUG(1)<<"Initialize fNApa["<<icry<<"] = "<<napa;
     fWiresPerPlane[icry].resize(ntpc);
-    fAnchoredWires[icry].resize(ntpc);         TLOG()<<"Initialize fAnchoredWires["<<icry<<"].resize("<<ntpc<<")";
-    fRopsPerApa[icry].resize(napa, 4);         TLOG()<<"Initialize fRopsPerApa["<<icry<<"].resize("<<napa<<",4)";
-    fPlanesPerRop[icry].resize(napa);          TLOG()<<"Initialize fPlanesPerRop["<<icry<<"].resize("<<napa<<")";
-    fFirstChannelInThisRop[icry].resize(napa); TLOG()<<"Initialize fFirstChannelInThisRop["<<icry<<"].resize("<<napa<<")";
-    fFirstChannelInNextRop[icry].resize(napa); TLOG()<<"Initialize fFirstChannelInNextRop["<<icry<<"].resize("<<napa<<")";
-    fRopTpc[icry].resize(napa);                TLOG()<<"Initialize fRopTpc["<<icry<<"].resize("<<napa<<")";
-    fRopPlane[icry].resize(napa);              TLOG()<<"Initialize fRopPlane["<<icry<<"].resize("<<napa<<")";
+    fAnchoredWires[icry].resize(ntpc);         TLOG_DEBUG(1)<<"Initialize fAnchoredWires["<<icry<<"].resize("<<ntpc<<")";
+    fRopsPerApa[icry].resize(napa, 4);         TLOG_DEBUG(1)<<"Initialize fRopsPerApa["<<icry<<"].resize("<<napa<<",4)";
+    fPlanesPerRop[icry].resize(napa);          TLOG_DEBUG(1)<<"Initialize fPlanesPerRop["<<icry<<"].resize("<<napa<<")";
+    fFirstChannelInThisRop[icry].resize(napa); TLOG_DEBUG(1)<<"Initialize fFirstChannelInThisRop["<<icry<<"].resize("<<napa<<")";
+    fFirstChannelInNextRop[icry].resize(napa); TLOG_DEBUG(1)<<"Initialize fFirstChannelInNextRop["<<icry<<"].resize("<<napa<<")";
+    fRopTpc[icry].resize(napa);                TLOG_DEBUG(1)<<"Initialize fRopTpc["<<icry<<"].resize("<<napa<<")";
+    fRopPlane[icry].resize(napa);              TLOG_DEBUG(1)<<"Initialize fRopPlane["<<icry<<"].resize("<<napa<<")";
     for ( Index itpc=0; itpc<ntpc; ++itpc ) {
-      Index npla = 3; /* U, V, Z */            TLOG()<<"npla="<<npla;
+      Index npla = 3; /* U, V, Z */            TLOG_DEBUG(1)<<"npla="<<npla;
       fAnchoredWires[icry][itpc].resize(npla, 0);
       fWiresPerPlane[icry][itpc].resize(npla, 0);
       for ( Index ipla=0; ipla<npla; ++ipla ) {
@@ -139,12 +139,12 @@ DuneApaWireReadoutGeom()
 	else if (itpc==1 && ipla==1) nwir = 315;
 	else if (itpc==1 && ipla==2) nwir = 240;
 	else {
-	  TLOG()<<"icry="<<icry<<" itpc="<<itpc<<" ipla="<<ipla<<" nwir="<<nwir;
+	  TLOG_DEBUG(1)<<"icry="<<icry<<" itpc="<<itpc<<" ipla="<<ipla<<" nwir="<<nwir;
 	  TLOG_ERROR() << "unexpected cryo, tpc, and/or plane";
 	  exit(1);
 	}
         fWiresPerPlane[icry][itpc][ipla] = nwir;
-	TLOG()<<"fWiresPerPlane[icry="<<icry<<"][itpc="<<itpc<<"][ipla="<<ipla<<"]="<<nwir;
+	TLOG_DEBUG(1)<<"fWiresPerPlane[icry="<<icry<<"][itpc="<<itpc<<"][ipla="<<ipla<<"]="<<nwir;
       }
     }
     Index itpc = 0;
@@ -190,7 +190,7 @@ DuneApaWireReadoutGeom()
         Index nrpl = fPlanesPerRop[icry][iapa][irop];
         fFirstChannelInThisRop[icry][iapa][irop] = icha;
         for ( Index irpl=0; irpl!=nrpl; ++irpl ) {
-	  Index itpc = fRopTpc[icry][iapa][irop][irpl];            TLOG()<<"itpc="<<itpc;
+	  Index itpc = fRopTpc[icry][iapa][irop][irpl];            TLOG_DEBUG(1)<<"itpc="<<itpc;
 	  Index ipla = fRopPlane[icry][iapa][irop][irpl];
 	  const Vector<View_t> eview = {geo::kU, geo::kV, geo::kZ};
 	  View_t view=eview[ipla];
@@ -200,7 +200,7 @@ DuneApaWireReadoutGeom()
 	  Index nwir = fWiresPerPlane[icry][itpc][ipla];
 	  if ( view == geo::kZ ) {
 	    nAnchoredWires = nwir;
-	    TLOG()<<"InitializeA nAnchoredWires="<<nAnchoredWires;
+	    TLOG_DEBUG(1)<<"InitializeA nAnchoredWires="<<nAnchoredWires;
           // Induction planes.
           } else {
 # if 0
@@ -209,7 +209,7 @@ DuneApaWireReadoutGeom()
               auto const xyz_next = plageo.Wire(iwir+1).GetCenter();
               if ( xyz.Z() == xyz_next.Z() ) {
                 nAnchoredWires = iwir;
-		TLOG()<<"InitializeB nAnchoredWires="<<nAnchoredWires;
+		TLOG_DEBUG(1)<<"InitializeB nAnchoredWires="<<nAnchoredWires;
                 break;
               }
             }
@@ -227,7 +227,7 @@ DuneApaWireReadoutGeom()
 	    TLOG_DEBUG(5)<<"setting nAnchoredWires = 200";
 	  }
 	  
-          fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG()<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
+          fAnchoredWires[icry][itpc][ipla] = nAnchoredWires;TLOG_DEBUG(1)<<"Initialize fAnchoredWires["<<icry<<"]["<<itpc<<"]["<<ipla<<"] = "<<nAnchoredWires;
 
           icha += nAnchoredWires;
         }
@@ -340,10 +340,11 @@ main(int /*argc*/, char** /*argv*/)
   DuneApaWireReadoutGeom  readout{};
 
   for (unsigned int chan=0; chan<1280; ++chan) {
-    std::string sview = "UVZ";
+    //std::string sview = "UVZ";
     //readout::ROPID ropid = wgeom.ChannelToROP(chan);
 
     auto wids = readout.ChannelToWire(chan);   // std::vector<geo::WireID>
+#if 0
     std::string swids;
     for ( unsigned int i=0; i<wids.size(); ++i) {
       if (i==0) {
@@ -354,7 +355,15 @@ main(int /*argc*/, char** /*argv*/)
       }
     }
     std::cout << "      channel: " << chan << " in view " << sview << " assoc with wires: " << swids << " in ROP: " << /*ropid.ROP <<*/ std::endl;
-
-  }
+#else
+    TLOG_SCOPED() {
+      TLOG_ADD<<"offline channel="<<chan<<" cryostat="<<wids[0].Cryostat
+	      <<" tpc="<<wids[0].TPC<<" plane="<<wids[0].Plane<<"wire="<<wids[0].Wire;
+      if (wids.size()>1)
+	TLOG_ADD<<" and cryostat="<<wids[0].Cryostat
+		<<" tpc="<<wids[0].TPC<<" plane="<<wids[0].Plane<<"wire="<<wids[0].Wire;
+    }
+#endif
+  } // for all channels
   return 0;
 }
