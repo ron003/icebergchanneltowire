@@ -333,15 +333,18 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
 
 
 int
-main(int /*argc*/, char** /*argv*/)
+main(int argc, char** argv)
 {
   TRACE(TLVL_DEBUG+1, "hello");
 
+  if (argc != 2) { TLOG_ERROR()<<"usage: "<<basename(argv[0])<<" <online_chan>"; return (1); }
+
+  unsigned chan = strtoul(argv[1],NULL,0);
+  
   DuneApaWireReadoutGeom  readout{};
 
   std::string sview = "UVZ";
-  for (unsigned int chan=0; chan<1280; ++chan) {
-    //readout::ROPID ropid = wgeom.ChannelToROP(chan);
+  //for (unsigned int chan=0; chan<1280; ++chan) {
 
     auto wids = readout.ChannelToWire(chan);   // std::vector<geo::WireID>
 
@@ -354,6 +357,6 @@ main(int /*argc*/, char** /*argv*/)
 	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
 	    <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire="<<wids[1].Wire
 	    <<" images="<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
-  } // for all channels
+  //} // for all channels
   return 0;
 }
