@@ -337,9 +337,25 @@ main(int argc, char** argv)
 {
   TRACE(TLVL_DEBUG+1, "hello");
 
-  if (argc != 2) { TLOG_ERROR()<<"usage: "<<basename(argv[0])<<" <online_chan>"; return (1); }
+  // Parse command line options
+  bool oneLineMode = false;
+  int chanArgIndex = -1;
+  
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--one-line") {
+      oneLineMode = true;
+    } else if (arg[0] != '-') {
+      chanArgIndex = i;
+    }
+  }
 
-  unsigned chan = strtoul(argv[1],NULL,0);
+  if (chanArgIndex == -1) {
+    TLOG_ERROR()<<"usage: "<<basename(argv[0])<<" [--one-line] <online_chan>";
+    return (1);
+  }
+
+  unsigned chan = strtoul(argv[chanArgIndex],NULL,0);
   
   DuneApaWireReadoutGeom  readout{};
 
@@ -348,15 +364,25 @@ main(int argc, char** argv)
 
     auto wids = readout.ChannelToWire(chan);   // std::vector<geo::WireID>
 
-    if (wids.size()==1)
-      TLOG()<<"offline channel="<<chan
-	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
-	    <<" image="<<(wids[0].TPC + wids[0].Plane*2);
-    if (wids.size()>1)
-      TLOG()<<"offline channel="<<chan
-	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
-	    <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire="<<wids[1].Wire
-	    <<" images="<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
+    if (oneLineMode) {
+      // Force single line output
+      if (wids.size()==1)
+        TLOG()<<"offline channel="<<chan
+  	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
+  	    <<" image="<<(wids[0].TPC + wids[0].Plane*2);
+      if (wids.size()>1)
+        TLOG()<<"offline channel="<<chan
+  	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
+  	    <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire="<<wids[1].Wire
+  	    <<" images="<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
+    } else {
+      // Default: output one line per wire
+      for (size_t i = 0; i < wids.size(); ++i) {
+        TLOG()<<"offline channel="<<chan<<" ["<<i<<"]"
+  	    <<" tpc="    <<wids[i].TPC<<" plane="<<sview[wids[i].Plane]<<" wire="<<wids[i].Wire
+  	    <<" image="<<(wids[i].TPC + wids[i].Plane*2);
+      }
+    }
   //} // for all channels
   return 0;
 }
