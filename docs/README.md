@@ -41,3 +41,32 @@ It is intended for local integration builds and does not replace this repository
 
 - This repository remains independently buildable as a normal package.
 - The devcontainer bootstrap script does not disable SSH host key checking.
+
+## CMake Presets
+
+This repository provides `CMakePresets.json` for `/workspaces`-based builds.
+
+Run workflow commands from the repository root directory:
+
+- `/workspaces/icebergchanneltowire`
+
+Prerequisites:
+
+- use this repository as the current working directory so CMake can find `CMakePresets.json`;
+- run inside the devcontainer, or run `.devcontainer/bootstrap-repos.sh` first to install required tools and create `/workspaces/build` and `/workspaces/install`;
+- ensure required package dependencies (for example `daq-cmake`, `TRACE`, and any sibling repos you depend on) are available in your environment and/or under `/workspaces/install`.
+
+Available preset groups:
+
+- configure: `dev-debug`, `dev-release`, `dev-aarch64-release`
+- build: `build-debug`, `build-release`, `build-aarch64-release`
+- test: `test-debug`, `test-release`, `test-aarch64-release`
+- workflow: `ci-debug`, `ci-release`, `ci-aarch64`
+
+Examples:
+
+```bash
+cmake --workflow --preset ci-debug
+cmake --workflow --preset ci-release
+cmake --workflow --preset ci-aarch64
+```
