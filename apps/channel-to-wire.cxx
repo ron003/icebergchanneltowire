@@ -57,6 +57,7 @@ class DuneApaWireReadoutGeom {
 public:
   DuneApaWireReadoutGeom();
   std::vector<WireID> ChannelToWire(ChannelID_t icha) const;
+  raw::ChannelID_t PlaneWireToChannel(geo::WireID const& wireID) const;
 
 #if 0
   inline PlaneGeo const* PlanePtr(PlaneID const& planeid) const
@@ -91,6 +92,9 @@ protected:
   ThreeVector<unsigned int>         fPlanesPerRop;          ///< # TPC planes for each (cry, apa, rop)
   ThreeVector<unsigned int>         fWiresPerPlane;         ///< # wires/TPC plane for each (cry, tpc, pla)
   ThreeVector<unsigned int>         fAnchoredWires;         ///< # anchored wires for each (cry, tpc, pla)
+  ThreeVector<unsigned int>         fPlaneApa;              ///< APA for each TPC plane (cry, tpc, pla)
+  ThreeVector<unsigned int>         fPlaneRop;              ///< ROP for each TPC plane (cry, tpc, pla)
+  ThreeVector<unsigned int>         fPlaneRopIndex;         ///< Index in ROP for each TPC plane (cry, tpc, pla)
   FourVector<unsigned int>          fRopTpc;                ///< # TPC planes for each (cry, apa, rop, rpl)
   FourVector<unsigned int>          fRopPlane;              ///< # TPC plane index for each (cry, apa, rop, rpl)
 
@@ -107,6 +111,9 @@ DuneApaWireReadoutGeom()
   fNcryostat = ncry;                   TLOG_DEBUG(1)<<"Initialize fNcryostat = "<<ncry;
   fNApa.resize(ncry);                  TLOG_DEBUG(1)<<"Initialize fNApa.resize("<<ncry<<")";
   fWiresPerPlane.resize(ncry);
+  fPlaneApa.resize(ncry);
+  fPlaneRop.resize(ncry);
+  fPlaneRopIndex.resize(ncry);
   fAnchoredWires.resize(ncry);         TLOG_DEBUG(1)<<"Initialize fAnchoredWires.resize("<<ncry<<")";
   fFirstChannelInThisRop.resize(ncry); TLOG_DEBUG(1)<<"Initialize fFirstChannelInThisRop.resize("<<ncry<<")";
   fFirstChannelInNextRop.resize(ncry); TLOG_DEBUG(1)<<"Initialize fFirstChannelInNextRop.resize("<<ncry<<")";
@@ -122,12 +129,18 @@ DuneApaWireReadoutGeom()
     fAnchoredWires[icry].resize(ntpc);         TLOG_DEBUG(1)<<"Initialize fAnchoredWires["<<icry<<"].resize("<<ntpc<<")";
     fRopsPerApa[icry].resize(napa, 4);         TLOG_DEBUG(1)<<"Initialize fRopsPerApa["<<icry<<"].resize("<<napa<<",4)";
     fPlanesPerRop[icry].resize(napa);          TLOG_DEBUG(1)<<"Initialize fPlanesPerRop["<<icry<<"].resize("<<napa<<")";
+    fPlaneApa[icry].resize(ntpc);
+    fPlaneRop[icry].resize(ntpc);
+    fPlaneRopIndex[icry].resize(ntpc);
     fFirstChannelInThisRop[icry].resize(napa); TLOG_DEBUG(1)<<"Initialize fFirstChannelInThisRop["<<icry<<"].resize("<<napa<<")";
     fFirstChannelInNextRop[icry].resize(napa); TLOG_DEBUG(1)<<"Initialize fFirstChannelInNextRop["<<icry<<"].resize("<<napa<<")";
     fRopTpc[icry].resize(napa);                TLOG_DEBUG(1)<<"Initialize fRopTpc["<<icry<<"].resize("<<napa<<")";
     fRopPlane[icry].resize(napa);              TLOG_DEBUG(1)<<"Initialize fRopPlane["<<icry<<"].resize("<<napa<<")";
     for ( Index itpc=0; itpc<ntpc; ++itpc ) {
       Index npla = 3; /* U, V, Z */            TLOG_DEBUG(1)<<"npla="<<npla;
+      fPlaneApa[icry][itpc].resize(npla, badIndex);
+      fPlaneRop[icry][itpc].resize(npla, badIndex);
+      fPlaneRopIndex[icry][itpc].resize(npla, badIndex);
       fAnchoredWires[icry][itpc].resize(npla, 0);
       fWiresPerPlane[icry][itpc].resize(npla, 0);
       for ( Index ipla=0; ipla<npla; ++ipla ) {
@@ -192,6 +205,9 @@ DuneApaWireReadoutGeom()
         for ( Index irpl=0; irpl!=nrpl; ++irpl ) {
 	  Index itpc = fRopTpc[icry][iapa][irop][irpl];            TLOG_DEBUG(1)<<"itpc="<<itpc;
 	  Index ipla = fRopPlane[icry][iapa][irop][irpl];
+	  fPlaneApa[icry][itpc][ipla] = iapa;
+          fPlaneRop[icry][itpc][ipla] = irop;
+	  fPlaneRopIndex[icry][itpc][ipla] = irpl;
 	  const Vector<View_t> eview = {geo::kU, geo::kV, geo::kZ};
 	  View_t view=eview[ipla];
 	  TLOG_DEBUG(3)<<"icry="<<icry<<" iapa="<<iapa<<" irop="<<irop<<" irpl="<<irpl<<" view="<<view<<" eview[ipla]="<<eview[ipla];
@@ -328,6 +344,34 @@ std::vector<WireID> DuneApaWireReadoutGeom::ChannelToWire(ChannelID_t icha) cons
 
 
 
+ChannelID_t DuneApaWireReadoutGeom::PlaneWireToChannel(WireID const& wirid) const {
+  Index icry = wirid.Cryostat;
+  Index itpc = wirid.TPC;
+  Index ipla = wirid.Plane;
+  Index ichaRop = wirid.Wire;
+  Index iapa = fPlaneApa[icry][itpc][ipla];      /**/
+  Index irop = fPlaneRop[icry][itpc][ipla];      /**/
+  Index irpl = fPlaneRopIndex[icry][itpc][ipla]; /**/
+  Index ncha = fAnchoredWires[icry][itpc][ipla];
+
+  Index nrpl = fPlanesPerRop[icry][iapa][irop];
+  if ( nrpl > 1 ) {      // Wrapped ROP
+    Index ipla1 = fRopPlane[icry][iapa][irop][0];
+    Index ipla2 = fRopPlane[icry][iapa][irop][1];
+    // Wire is in the back TPC.
+    if ( irpl == 1 ) {
+      ichaRop += fAnchoredWires[icry][itpc][ipla1];
+      ncha += fAnchoredWires[icry][itpc][ipla1];
+    // Wire is in the front TPC.
+    } else {
+      ncha += fAnchoredWires[icry][itpc][ipla2];
+    }
+  }
+  // Channel # in ROP is modulus the # channels in the ROP.
+  Index icha1 = fFirstChannelInThisRop[icry][iapa][irop];
+  Index icha = icha1 + ichaRop%ncha;
+  return icha;
+}
 
 
 
@@ -367,20 +411,20 @@ main(int argc, char** argv)
     if (oneLineMode) {
       // Force single line output
       if (wids.size()==1)
-        TLOG()<<"offline channel="<<chan
-  	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
-  	    <<" image="<<(wids[0].TPC + wids[0].Plane*2);
+        TLOG()<<"off_chan: "<<chan
+            <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire: "<<wids[0].Wire
+            <<" image: "<<(wids[0].TPC + wids[0].Plane*2);
       if (wids.size()>1)
-        TLOG()<<"offline channel="<<chan
-  	    <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire="<<wids[0].Wire
-  	    <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire="<<wids[1].Wire
-  	    <<" images="<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
+        TLOG()<<"off_chan:"<<chan
+            <<" tpc="    <<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire: "<<wids[0].Wire
+            <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire: "<<wids[1].Wire
+            <<" images: "<<(wids[0].TPC + wids[0].Plane*2)<<","<<(wids[1].TPC + wids[1].Plane*2);
     } else {
       // Default: output one line per wire
       for (size_t i = 0; i < wids.size(); ++i) {
-        TLOG()<<"offline channel="<<chan<<" ["<<i<<"]"
-  	    <<" tpc="    <<wids[i].TPC<<" plane="<<sview[wids[i].Plane]<<" wire="<<wids[i].Wire
-  	    <<" image="<<(wids[i].TPC + wids[i].Plane*2);
+        TLOG()<<"off_chan: "<<chan
+            <<" tpc="    <<wids[i].TPC<<" plane="<<sview[wids[i].Plane]<<" wire: "<<wids[i].Wire
+            <<" image: "<<(wids[i].TPC + wids[i].Plane*2);
       }
     }
   //} // for all channels
