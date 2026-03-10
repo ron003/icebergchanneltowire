@@ -26,11 +26,18 @@ sudo apt-get install -y \
   cmake \
   gdb \
   git-lfs \
+  sqlite3 libsqlite3-dev \
+  libboost-program-options-dev \
+  libboost-regex-dev \
+  libboost-test-dev \
+  libssl-dev \
+  libprotobuf-dev protobuf-compiler \
+  libabsl-dev \
   gcc-aarch64-linux-gnu \
   g++-aarch64-linux-gnu \
   libc6-dev-arm64-cross \
   binutils-aarch64-linux-gnu \
-  python3 python3-venv
+  python3 python3-venv python3-dev
 
 # Ensure Git LFS hooks and filters are configured for this user.
 git lfs install
