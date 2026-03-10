@@ -1,0 +1,24 @@
+cmake_minimum_required(VERSION 3.16)
+project(workspaces-superbuild LANGUAGES C CXX)
+
+# This file is intended for a local multi-repo workspace rooted at /workspaces.
+# It is optional and does not replace package-level CMakeLists.txt files.
+
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "/workspaces/install" CACHE PATH "Install prefix" FORCE)
+endif()
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Add known sibling repos if they exist.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/icebergchanneltowire/CMakeLists.txt")
+  add_subdirectory(icebergchanneltowire EXCLUDE_FROM_ALL)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/detdataformats/CMakeLists.txt")
+  add_subdirectory(detdataformats EXCLUDE_FROM_ALL)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/fddetdataformats/CMakeLists.txt")
+  add_subdirectory(fddetdataformats EXCLUDE_FROM_ALL)
+endif()
