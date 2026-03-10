@@ -11,10 +11,14 @@ sudo apt-get install -y \
   build-essential \
   cmake \
   gdb \
+  git-lfs \
   gcc-aarch64-linux-gnu \
   g++-aarch64-linux-gnu \
   libc6-dev-arm64-cross \
   binutils-aarch64-linux-gnu
+
+# Ensure Git LFS hooks and filters are configured for this user.
+git lfs install
 
 # Workspace layout defaults.
 : "${REPO_ROOT:=/workspaces}"

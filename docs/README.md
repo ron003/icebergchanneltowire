@@ -7,6 +7,7 @@ This repository includes a `.devcontainer` setup designed for multi-repo workspa
 On container creation, `.devcontainer/bootstrap-repos.sh` will:
 
 - install build and cross-compilation tools;
+- install and initialize Git LFS (`git lfs install`);
 - create shared workspace directories at `/workspaces/build` and `/workspaces/install`;
 - clone or update required sibling repositories under `/workspaces`.
 
