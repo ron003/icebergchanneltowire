@@ -22,7 +22,7 @@ The bootstrap script supports these environment variables:
 - `REPO_ROOT` (default: `/workspaces`)
 - `BUILD_ROOT` (default: `${REPO_ROOT}/build`)
 - `INSTALL_ROOT` (default: `${REPO_ROOT}/install`)
-- `WRITE_TOPLEVEL_CMAKE` (default: `0`)
+- `WRITE_TOPLEVEL_CMAKE` (default: `1`)
 - `TOPLEVEL_CMAKE_PATH` (default: `${REPO_ROOT}/CMakeLists.txt`)
 
 Example: also write a top-level `/workspaces/CMakeLists.txt` from the template:

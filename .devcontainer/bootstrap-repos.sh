@@ -20,7 +20,7 @@ sudo apt-get install -y \
 : "${REPO_ROOT:=/workspaces}"
 : "${BUILD_ROOT:=${REPO_ROOT}/build}"
 : "${INSTALL_ROOT:=${REPO_ROOT}/install}"
-: "${WRITE_TOPLEVEL_CMAKE:=0}"
+: "${WRITE_TOPLEVEL_CMAKE:=1}"
 : "${TOPLEVEL_CMAKE_PATH:=${REPO_ROOT}/CMakeLists.txt}"
 
 mkdir -p "${BUILD_ROOT}" "${INSTALL_ROOT}"
