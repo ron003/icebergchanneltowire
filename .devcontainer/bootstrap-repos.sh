@@ -36,7 +36,7 @@ mkdir -p "${BUILD_ROOT}" "${INSTALL_ROOT}"
 REPOS=(
   "https://github.com/DUNE-DAQ/detdataformats.git|coredaq-v5.4.3|detdataformats"
   "https://github.com/DUNE-DAQ/fddetdataformats.git|fddaq-v5.4.3|fddetdataformats"
-  "https://github.com/ron003/scripts.git|main|scripts"
+  "https://github.com/ron003/script.git||script"
 )
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
