@@ -15,7 +15,8 @@ sudo apt-get install -y \
   gcc-aarch64-linux-gnu \
   g++-aarch64-linux-gnu \
   libc6-dev-arm64-cross \
-  binutils-aarch64-linux-gnu
+  binutils-aarch64-linux-gnu \
+  python3 python3-venv
 
 # Ensure Git LFS hooks and filters are configured for this user.
 git lfs install
