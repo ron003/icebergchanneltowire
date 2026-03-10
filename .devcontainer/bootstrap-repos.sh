@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Install SSH key from Codespaces secret SSH_PRIVATE_KEY if present.
+# To set this up: github.com → Settings → Codespaces → Secrets → New secret
+#   Name: SSH_PRIVATE_KEY  Value: contents of your ~/.ssh/id_ed25519
+if [[ -n "${SSH_PRIVATE_KEY:-}" ]]; then
+  mkdir -p ~/.ssh
+  chmod 700 ~/.ssh
+  echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+  chmod 600 ~/.ssh/id_ed25519
+  ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+  echo "SSH key installed from SSH_PRIVATE_KEY secret."
+else
+  echo "SSH_PRIVATE_KEY secret not set; skipping SSH key installation."
+fi
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_DIR}"
