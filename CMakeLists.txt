@@ -12,6 +12,7 @@ project(icebergchanneltowire VERSION 0.0.0)
 
 find_package(daq-cmake REQUIRED)
 find_package(TRACE REQUIRED)
+find_package(PNG REQUIRED)
 
 daq_setup_environment()
 
@@ -24,6 +25,12 @@ find_package(Boost COMPONENTS unit_test_framework REQUIRED)
 # See https://dune-daq-sw.readthedocs.io/en/latest/packages/daq-cmake/#daq_add_application
 
 daq_add_application(channel-to-wire channel-to-wire.cxx LINK_LIBRARIES TRACE::TRACE) # Any libraries to link in not yet determined
+
+daq_add_application(images-to-pcap 
+    images-to-pcap.cxx 
+    PngImageLoader.cpp 
+    PcapWriter.cpp 
+    LINK_LIBRARIES TRACE::TRACE PNG::PNG)
 
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/apps"
