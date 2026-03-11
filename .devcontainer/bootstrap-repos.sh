@@ -44,8 +44,8 @@ git lfs install
 
 # Workspace layout defaults.
 : "${REPO_ROOT:=/workspaces/sourcecode}"
-: "${BUILD_ROOT:=${REPO_ROOT}/build}"
-: "${INSTALL_ROOT:=${REPO_ROOT}/install}"
+: "${BUILD_ROOT:=${REPO_ROOT}/../build}"
+: "${INSTALL_ROOT:=${REPO_ROOT}/../install}"
 : "${WRITE_TOPLEVEL_CMAKE:=1}"
 : "${TOPLEVEL_CMAKE_PATH:=${REPO_ROOT}/CMakeLists.txt}"
 
@@ -58,7 +58,7 @@ mkdir -p "${BUILD_ROOT}" "${INSTALL_ROOT}"
 REPOS=(
   "https://github.com/DUNE-DAQ/detdataformats.git|coredaq-v5.4.3|detdataformats"
   "https://github.com/DUNE-DAQ/fddetdataformats.git|fddaq-v5.4.3|fddetdataformats"
-  "https://github.com/ron003/script.git||script"
+  "https://github.com/ron003/script.git||../script"
 )
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
