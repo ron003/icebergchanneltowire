@@ -9,8 +9,10 @@
  */
 
 #include <stdio.h>		// printf
+#include <stdlib.h>
 #include <vector>
 #include <map>
+#include <string>
 //#include "DuneApaWireReadoutGeom.h"
 #include "larcoreobj/SimpleTypesAndConstants/geo_types.h" // geo::WireID
 #include "larcoreobj/SimpleTypesAndConstants/RawTypes.h"  // raw::ChannelID_t
@@ -381,27 +383,89 @@ main(int argc, char** argv)
 {
   TRACE(TLVL_DEBUG+1, "hello");
 
+  auto printHelp = [argv]() {
+    printf("Usage:\n");
+    printf("  %s [--one-line] <online_chan>\n", basename(argv[0]));
+    printf("  %s [--one-line] --plane=<plane> --tpc=<tpc> --wire=<wire>\n", basename(argv[0]));
+    printf("\n");
+    printf("Options:\n");
+    printf("  --one-line   Print one output line (forward mode only).\n");
+    printf("  --plane=     Plane index for reverse lookup.\n");
+    printf("  --tpc=       TPC index for reverse lookup.\n");
+    printf("  --wire=      Wire index for reverse lookup.\n");
+    printf("  -h, --help   Show this help text.\n");
+    printf("\n");
+    printf("Notes:\n");
+    printf("  If any of --plane=, --tpc=, or --wire= is given, all three are required.\n");
+    printf("  In reverse mode, <online_chan> must not be provided.\n");
+    printf("  Reverse mode uses cryostat 0 when constructing WireID.\n");
+  };
+
   // Parse command line options
   bool oneLineMode = false;
   int chanArgIndex = -1;
+  int nPositionalArgs = 0;
+  bool havePlane = false;
+  bool haveTpc = false;
+  bool haveWire = false;
+  unsigned plane = 0;
+  unsigned tpc = 0;
+  unsigned wire = 0;
   
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--one-line") {
+    if (arg == "-h" || arg == "--help") {
+      printHelp();
+      return 0;
+    } else if (arg == "--one-line") {
       oneLineMode = true;
+    } else if (arg.rfind("--plane=", 0) == 0) {
+      havePlane = true;
+      plane = strtoul(arg.c_str() + 8, NULL, 0);
+    } else if (arg.rfind("--tpc=", 0) == 0) {
+      haveTpc = true;
+      tpc = strtoul(arg.c_str() + 6, NULL, 0);
+    } else if (arg.rfind("--wire=", 0) == 0) {
+      haveWire = true;
+      wire = strtoul(arg.c_str() + 7, NULL, 0);
     } else if (arg[0] != '-') {
       chanArgIndex = i;
+      ++nPositionalArgs;
+    } else {
+      TLOG_ERROR()<<"Unknown option: "<<arg;
+      return 1;
     }
   }
 
-  if (chanArgIndex == -1) {
-    TLOG_ERROR()<<"usage: "<<basename(argv[0])<<" [--one-line] <online_chan>";
+  bool reverseMode = havePlane || haveTpc || haveWire;
+  if (reverseMode && !(havePlane && haveTpc && haveWire)) {
+    TLOG_ERROR()<<"If any of --plane=, --tpc=, or --wire= is provided, all three must be provided.";
+    printHelp();
     return (1);
   }
 
-  unsigned chan = strtoul(argv[chanArgIndex],NULL,0);
-  
+  if (reverseMode && nPositionalArgs > 0) {
+    TLOG_ERROR()<<"Do not provide <online_chan> when using --plane=, --tpc=, and --wire=.";
+    return (1);
+  }
+
+  if (!reverseMode && nPositionalArgs != 1) {
+    printHelp();
+    return (1);
+  }
+
   DuneApaWireReadoutGeom  readout{};
+
+  if (reverseMode) {
+    // Reverse lookup uses cryostat 0 by requirement.
+    WireID wid(0, tpc, plane, wire);
+    unsigned chan = readout.PlaneWireToChannel(wid);
+    TLOG()<<"off_chan: "<<chan
+          <<" tpc="<<tpc<<" plane="<<plane<<" wire: "<<wire;
+    return 0;
+  }
+
+  unsigned chan = strtoul(argv[chanArgIndex],NULL,0);
 
   std::string sview = "UVZ";
   //for (unsigned int chan=0; chan<1280; ++chan) {
