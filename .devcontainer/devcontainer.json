@@ -1,8 +1,6 @@
 {
   "name": "Iceberg Channel To Wire - Ubuntu",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/sourcecode/icebergchanneltowire,type=bind,consistency=cached",
-  "workspaceFolder": "/workspaces/sourcecode/icebergchanneltowire",
   "hostRequirements": {
     "cpus": 4,
     "memory": "8gb",
