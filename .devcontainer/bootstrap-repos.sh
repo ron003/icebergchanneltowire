@@ -37,6 +37,7 @@ sudo apt-get install -y \
   g++-aarch64-linux-gnu \
   libc6-dev-arm64-cross \
   binutils-aarch64-linux-gnu \
+  libpng-dev \
   python3 python3-venv python3-dev
 
 # Ensure Git LFS hooks and filters are configured for this user.
