@@ -38,6 +38,7 @@ sudo apt-get install -y \
   libc6-dev-arm64-cross \
   binutils-aarch64-linux-gnu \
   libpng-dev \
+  tcpdump \
   python3 python3-venv python3-dev
 
 # Ensure Git LFS hooks and filters are configured for this user.
