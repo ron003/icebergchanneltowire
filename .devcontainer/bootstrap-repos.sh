@@ -39,6 +39,7 @@ sudo apt-get install -y \
   binutils-aarch64-linux-gnu \
   libpng-dev \
   tcpdump \
+  file \
   python3 python3-venv python3-dev
 
 # Ensure Git LFS hooks and filters are configured for this user.
