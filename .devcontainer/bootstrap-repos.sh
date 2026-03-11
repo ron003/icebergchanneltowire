@@ -58,6 +58,7 @@ mkdir -p "${BUILD_ROOT}" "${INSTALL_ROOT}"
 REPOS=(
   "https://github.com/DUNE-DAQ/detdataformats.git|coredaq-v5.4.3|detdataformats"
   "https://github.com/DUNE-DAQ/fddetdataformats.git|fddaq-v5.4.3|fddetdataformats"
+  "https://github.com/DUNE-DAQ/daq-cmake.git|fddaq-v5.4.3|daq-cmake"
   "https://github.com/ron003/script.git||../script"
 )
 
