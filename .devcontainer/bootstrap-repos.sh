@@ -43,7 +43,7 @@ sudo apt-get install -y \
 git lfs install
 
 # Workspace layout defaults.
-: "${REPO_ROOT:=/workspaces}"
+: "${REPO_ROOT:=/workspaces/sourcecode}"
 : "${BUILD_ROOT:=${REPO_ROOT}/build}"
 : "${INSTALL_ROOT:=${REPO_ROOT}/install}"
 : "${WRITE_TOPLEVEL_CMAKE:=1}"
