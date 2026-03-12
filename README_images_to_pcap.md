@@ -98,7 +98,7 @@ If an image is not provided via command-line option, the application will:
 
 2. If not found and `--columns` is specified, generate a test image with:
    - Dimensions: `<columns> × <expected_rows>`
-   - Pixel values: `1000 + tpc_number`
+  - Pixel values: `(row << 8) | (col & 0xff)`
    - Saved to `--image-dir` with the standard naming pattern
 
 ## Consistency Requirements

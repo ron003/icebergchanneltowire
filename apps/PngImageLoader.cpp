@@ -2,6 +2,7 @@
 #include <png.h>
 #include <fstream>
 #include <cstring>
+#include "TRACE/trace.h"
 
 struct PngReadState {
   std::ifstream file;
@@ -114,8 +115,7 @@ static void png_write_callback(png_structp png_ptr, png_bytep data, png_size_t l
 
 void PngImageLoader::generateTestImage(const std::string& filename,
                                        uint16_t width,
-                                       uint16_t height,
-                                       uint16_t value) {
+                                       uint16_t height) {
   // Validate dimensions
   if (width % 64 != 0 || width > 512 || width == 0) {
     throw std::runtime_error("Width must be a multiple of 64 and at most 512");
@@ -160,16 +160,27 @@ void PngImageLoader::generateTestImage(const std::string& filename,
       PNG_FILTER_TYPE_DEFAULT
     );
 
+    // Keep generated test images close to raw size for easier inspection.
+    png_set_compression_level(png, 0);
+    png_set_filter(png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE);
+
     png_write_info(png, info);
 
     // Set byte order for 16-bit values
     png_set_swap(png);
 
-    // Create full image data with constant value and write in one pass
-    std::vector<uint16_t> image_data(static_cast<size_t>(width) * height, value);
+    // Encode the row in the high byte and the column in the low byte.
+    std::vector<uint16_t> image_data(static_cast<size_t>(width) * height);
     std::vector<png_bytep> row_pointers(height);
 
+    TLOG_DEBUG(1) << "Generating test image: " << filename
+                 << " (" << width << "x" << height
+                 << ") with value formula (row << 8) | (col & 0xff)";
     for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        image_data[(static_cast<size_t>(y) * width) + x] =
+          static_cast<uint16_t>((y << 8) | (x & 0xff));
+      }
       row_pointers[y] = reinterpret_cast<png_bytep>(
         image_data.data() + (static_cast<size_t>(y) * width)
       );

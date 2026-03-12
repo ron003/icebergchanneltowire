@@ -31,12 +31,11 @@ public:
    * @param filename Path where to save the PNG file
    * @param width Image width (must be multiple of 64, max 512)
    * @param height Image height
-   * @param value Fill value for pixels (will be replicated across image)
+    * Pixel values are generated as `(row << 8) | (col & 0xff)`.
    */
   static void generateTestImage(const std::string& filename, 
                                 uint16_t width, 
-                                uint16_t height, 
-                                uint16_t value = 1000);
+                        uint16_t height);
 };
 
 #endif // ICEBERG_CHANNEL_TO_WIRE_PNG_IMAGE_LOADER_HPP

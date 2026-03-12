@@ -169,7 +169,7 @@ bool ImagesTopcap::loadOrGenerateImage(PlaneInfo& plane,
       try {
         std::cout << "Generating test image: " << filename << std::endl;
         PngImageLoader::generateTestImage(filename, common_columns_, 
-                                         plane.expected_rows, 1000 + plane.tpc_num);
+                                         plane.expected_rows);
         plane.data = PngImageLoader::loadImage(filename);
         if (validateImage(plane)) {
           return true;
