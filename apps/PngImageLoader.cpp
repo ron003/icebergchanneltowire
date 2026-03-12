@@ -165,14 +165,17 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     // Set byte order for 16-bit values
     png_set_swap(png);
 
-    // Create image data with constant value
-    std::vector<uint16_t> row_data(width, value);
+    // Create full image data with constant value and write in one pass
+    std::vector<uint16_t> image_data(static_cast<size_t>(width) * height, value);
     std::vector<png_bytep> row_pointers(height);
 
     for (uint32_t y = 0; y < height; ++y) {
-      row_pointers[y] = reinterpret_cast<png_bytep>(row_data.data());
-      png_write_row(png, row_pointers[y]);
+      row_pointers[y] = reinterpret_cast<png_bytep>(
+        image_data.data() + (static_cast<size_t>(y) * width)
+      );
     }
+
+    png_write_image(png, row_pointers.data());
 
     png_write_end(png, nullptr);
 
