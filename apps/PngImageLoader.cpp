@@ -179,7 +179,7 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     for (uint32_t y = 0; y < height; ++y) {
       for (uint32_t x = 0; x < width; ++x) {
         image_data[(static_cast<size_t>(y) * width) + x] =
-          static_cast<uint16_t>((y << 8) | (x & 0xff));
+          static_cast<uint16_t>(((x & 0x3f) << 8) | (y & 0xff));
       }
       row_pointers[y] = reinterpret_cast<png_bytep>(
         image_data.data() + (static_cast<size_t>(y) * width)
