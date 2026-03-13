@@ -24,6 +24,9 @@
 #include <fstream>
 #include <filesystem>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
 
 #include "TRACE/trace.h"
 #include "IcebergWireChannelMap.hpp"
@@ -364,6 +367,104 @@ bool ImagesTopcap::generatePcap() {
       if (args_.verbose && !channels.empty()) {
         std::cout << "Mapped " << key << " wires to offline channels "
                   << channels.front() << "..." << channels.back() << std::endl;
+      }
+    }
+
+    // ---- Build the full pixel data block indexed by [offline_channel][timetick] ----
+    // pixelDataBlock[ch][col] = 16-bit ADC value for offline channel ch at timetick col.
+    // Dimensions: [0..Nchannels-1][0..common_columns_-1]  (e.g. [1280][64])
+    const unsigned int total_channels = channel_map_.Nchannels();
+    std::vector<std::vector<uint16_t>> pixelDataBlock(
+        total_channels, std::vector<uint16_t>(common_columns_, 0));
+
+    for (auto const& [key, plane] : planes_) {
+      auto const& channels = offline_channels.at(key);
+      uint16_t const ncols = std::min(plane.data.width, common_columns_);
+      for (unsigned int wire = 0; wire < plane.data.height; ++wire) {
+        if (wire >= channels.size()) continue;
+        raw::ChannelID_t const ch = channels[wire];
+        if (ch >= total_channels) continue;
+        for (uint16_t col = 0; col < ncols; ++col) {
+          pixelDataBlock[ch][col] = plane.data.pixels[wire * plane.data.width + col];
+        }
+      }
+    }
+
+    // ---- BREAKPOINT: pixelDataBlock is fully populated here ----
+    // All 6 images have been merged into pixelDataBlock[offline_channel][timetick].
+    // Inspect pixelDataBlock[0..1279][0..common_columns_-1] to view the full detector snapshot.
+    TLOG_DEBUG(1) << "pixelDataBlock populated: " << total_channels
+                  << " channels x " << common_columns_ << " timeticks";
+
+    // Debug logging: 32 timeticks per log line, one line per channel per window
+    for (unsigned int ch = 0; ch < total_channels; ++ch) {
+      TLOG_DEBUG_SCOPED(10) {
+        TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex;
+        for (uint16_t col = 0; col < 32; ++col) {
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+      TLOG_DEBUG_SCOPED(11) {
+        TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 32<<":"<<std::hex;
+        for (uint16_t col = 32; col < 64; ++col) {
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+      if (common_columns_ > 64) {
+        TLOG_DEBUG_SCOPED(12) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 64<<":" << std::hex;
+          for (uint16_t col = 64; col < 96; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }          
+        }
+        TLOG_DEBUG_SCOPED(13) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 96<<":" << std::hex;
+          for (uint16_t col = 96; col < 128; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }          
+        }
+      }
+      if (common_columns_ > 128) {
+        TLOG_DEBUG_SCOPED(14) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 128<<":" << std::hex;
+          for (uint16_t col = 128; col < 160; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }          
+        }
+        TLOG_DEBUG_SCOPED(15) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 160<<":" << std::hex;
+          for (uint16_t col = 160; col < 192; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }
+        }
+      }
+      if (common_columns_ > 192) {
+        TLOG_DEBUG_SCOPED(16) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 192<<":" << std::hex;
+          for (uint16_t col = 192; col < 224; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }
+        }
+        TLOG_DEBUG_SCOPED(17) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 224<<":" << std::hex;
+          for (uint16_t col = 224; col < 256; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }
+        }
+      }
+      if (common_columns_ > 256) {
+        TLOG_DEBUG_SCOPED(18) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]:" << 256<<":" << std::hex;
+          for (uint16_t col = 256; col < 288; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }
+        }
+        TLOG_DEBUG_SCOPED(19) {
+          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 288<<":" << std::hex;
+          for (uint16_t col = 288; col < 320; ++col) {
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+          }
+        }
       }
     }
 
