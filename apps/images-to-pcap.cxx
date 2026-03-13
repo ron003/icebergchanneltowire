@@ -26,21 +26,9 @@
 #include <cstring>
 
 #include "TRACE/trace.h"
+#include "IcebergWireChannelMap.hpp"
 #include "PngImageLoader.hpp"
 #include "PcapWriter.hpp"
-
-// Mock types and structs (replace with real ones from the actual geometry)
-namespace geo {
-  struct WireID {
-    unsigned int cryostat;
-    unsigned int tpc;
-    unsigned int plane;
-    unsigned int wire;
-    
-    WireID(unsigned int cry, unsigned int t, unsigned int p, unsigned int w)
-      : cryostat(cry), tpc(t), plane(p), wire(w) {}
-  };
-}
 
 namespace dune {
   struct DuneToolException : public std::runtime_error {
@@ -89,8 +77,13 @@ private:
   bool validateImage(const PlaneInfo& plane);
   bool loadOrGenerateImage(PlaneInfo& plane,
                           const std::string& plane_name);
+  raw::ChannelID_t offlineChannelForWire(char plane_char,
+                                         unsigned int tpc_num,
+                                         unsigned int wire_num) const;
   std::string buildImageFilename(char plane_char, unsigned int tpc_num,
                                  uint16_t cols) const;
+
+  geo::IcebergWireChannelMap channel_map_;
 };
 
 uint32_t ImagesTopcap::getPlaneIndex(char plane_char) const {
@@ -187,6 +180,13 @@ bool ImagesTopcap::loadOrGenerateImage(PlaneInfo& plane,
               << plane.plane_char << plane.tpc_num << std::endl;
     return false;
   }
+}
+
+raw::ChannelID_t ImagesTopcap::offlineChannelForWire(char plane_char,
+                                                     unsigned int tpc_num,
+                                                     unsigned int wire_num) const {
+  geo::WireID wire_id(0, tpc_num, getPlaneIndex(plane_char), wire_num);
+  return channel_map_.PlaneWireToChannel(wire_id);
 }
 
 bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
@@ -352,6 +352,20 @@ bool ImagesTopcap::generatePcap() {
 
   try {
     PcapWriter pcap(args_.output_file);
+    std::map<std::string, std::vector<raw::ChannelID_t>> offline_channels;
+
+    for (auto const& [key, plane] : planes_) {
+      auto& channels = offline_channels[key];
+      channels.reserve(plane.data.height);
+      for (unsigned int wire = 0; wire < plane.data.height; ++wire) {
+        channels.push_back(offlineChannelForWire(plane.plane_char, plane.tpc_num, wire));
+      }
+
+      if (args_.verbose && !channels.empty()) {
+        std::cout << "Mapped " << key << " wires to offline channels "
+                  << channels.front() << "..." << channels.back() << std::endl;
+      }
+    }
 
     // For each group of 64 columns
     uint16_t num_column_groups = common_columns_ / 64;
@@ -364,17 +378,24 @@ bool ImagesTopcap::generatePcap() {
     //    - Build UDP packet with the wire data
     //    - Write to PCAP
 
-    // For now, create placeholder packets
+    // For now, create placeholder packets while using the real wire-to-channel map.
     for (uint16_t col_group = 0; col_group < num_column_groups; ++col_group) {
-      // Create a simple test packet for each column group
-      uint32_t packet_size = 1024;  // Example: 1KB packet
+      uint32_t packet_size = 1024;
       std::vector<uint8_t> packet_data(packet_size);
 
-      // Fill with test pattern (plane index in first 4 bytes)
-      // In real implementation, this would contain actual wire channel data
       memset(packet_data.data(), 0xAA, packet_size);
 
-      // Write packet to PCAP
+      size_t packet_offset = 0;
+      for (auto const& [key, channels] : offline_channels) {
+        if (channels.empty() || packet_offset + sizeof(uint32_t) > packet_data.size()) {
+          continue;
+        }
+
+        uint32_t const channel = channels[col_group % channels.size()];
+        std::memcpy(packet_data.data() + packet_offset, &channel, sizeof(channel));
+        packet_offset += sizeof(channel);
+      }
+
       pcap.writePacket(packet_data.data(), packet_data.size());
     }
 

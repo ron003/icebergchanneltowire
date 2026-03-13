@@ -21,16 +21,19 @@ find_package(Boost COMPONENTS unit_test_framework REQUIRED)
 
 ##############################################################################
 
+add_library(icebergwirechannelmap STATIC apps/IcebergWireChannelMap.cpp)
+target_include_directories(icebergwirechannelmap PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/apps")
+target_link_libraries(icebergwirechannelmap PUBLIC TRACE::TRACE)
 
 # See https://dune-daq-sw.readthedocs.io/en/latest/packages/daq-cmake/#daq_add_application
 
-daq_add_application(channel-to-wire channel-to-wire.cxx LINK_LIBRARIES TRACE::TRACE) # Any libraries to link in not yet determined
+daq_add_application(channel-to-wire channel-to-wire.cxx LINK_LIBRARIES TRACE::TRACE icebergwirechannelmap)
 
 daq_add_application(images-to-pcap 
     images-to-pcap.cxx 
     PngImageLoader.cpp 
     PcapWriter.cpp 
-    LINK_LIBRARIES TRACE::TRACE PNG::PNG)
+    LINK_LIBRARIES TRACE::TRACE PNG::PNG icebergwirechannelmap)
 
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/apps"
