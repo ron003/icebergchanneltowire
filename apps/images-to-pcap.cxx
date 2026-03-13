@@ -57,6 +57,7 @@ struct CommandLineArgs {
   std::string z0_image;
   std::string z1_image;
   std::string image_dir = ".";
+  std::string image_prefix;
   std::string output_file = "output.pcap";
   bool verbose = false;
   uint16_t timestamp_us = 0;
@@ -122,8 +123,9 @@ bool ImagesTopcap::validateImage(const PlaneInfo& plane) {
 std::string ImagesTopcap::buildImageFilename(char plane_char, 
                                              unsigned int tpc_num,
                                              uint16_t cols) const {
-  std::string filename = std::string(1, plane_char) + std::to_string(tpc_num) + 
-                        "x" + std::to_string(cols) + ".png";
+  std::string filename = args_.image_prefix + std::string(1, plane_char) +
+                         std::to_string(tpc_num) + "x" +
+                         std::to_string(cols) + ".png";
   return args_.image_dir + "/" + filename;
 }
 
@@ -212,6 +214,7 @@ bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
                 << "  --z0 FILE          Path to Z plane 0 PNG image" << std::endl
                 << "  --z1 FILE          Path to Z plane 1 PNG image" << std::endl
                 << "  --image-dir DIR    Directory for auto-generated images (default: '.')" << std::endl
+                << "  --image-prefix STR Prefix prepended to auto image filenames" << std::endl
                 << "  --output FILE      Output PCAP file (default: 'output.pcap')" << std::endl
                 << "  --columns N        Force column count (must be multiple of 64)" << std::endl
                 << "  --verbose          Enable verbose output" << std::endl
@@ -244,6 +247,9 @@ bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
     }
     else if (arg == "--image-dir" && i + 1 < argc) {
       args_.image_dir = argv[++i];
+    }
+    else if (arg == "--image-prefix" && i + 1 < argc) {
+      args_.image_prefix = argv[++i];
     }
     else if (arg == "--output" && i + 1 < argc) {
       args_.output_file = argv[++i];

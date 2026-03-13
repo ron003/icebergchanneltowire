@@ -36,13 +36,14 @@ Complete argument parsing for:
   --v0 image.png --v1 image.png \
   --z0 image.png --z1 image.png \
   --image-dir . \                  # Directory for auto-generated images
+   --image-prefix run42_ \          # Prefix for auto-discovered/generated images
   --output detector.pcap \         # Output PCAP file
   --columns 256 \                  # Force specific column count
   --verbose                        # Verbose logging
 ```
 
 ### ✅ Image Auto-Discovery
-- If image not provided, searches `--image-dir` for file matching pattern: `<plane><tpc>x<cols>.png`
+- If image not provided, searches `--image-dir` for file matching pattern: `<prefix><plane><tpc>x<cols>.png`
 - If not found, generates test image with specific dimensions
 - Validates all discovered/generated images match common dimensions
 

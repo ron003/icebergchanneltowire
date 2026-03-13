@@ -57,6 +57,7 @@ This application converts 16-bit grayscale PNG images representing ICEBERG TPC w
   --z1 FILE              Path to Z plane 1 PNG image
   
   --image-dir DIR        Directory for auto-generated images (default: '.')
+  --image-prefix STR     Prefix prepended to auto image filenames
   --output FILE          Output PCAP file (default: 'output.pcap')
   --columns N            Force column count (must be multiple of 64)
   --verbose              Enable verbose output
@@ -80,6 +81,7 @@ This application converts 16-bit grayscale PNG images representing ICEBERG TPC w
 ./images-to-pcap \
   --u0 u0.png \
   --image-dir ./images \
+  --image-prefix run42_ \
   --columns 256 \
   --output partial.pcap
 ```
@@ -93,13 +95,14 @@ This application converts 16-bit grayscale PNG images representing ICEBERG TPC w
 
 If an image is not provided via command-line option, the application will:
 
-1. Search for an existing PNG file in `--image-dir` with naming pattern: `<plane><tpc>x<columns>.png`
-   - Example: `U0x256.png` for U plane TPC 0 with 256 columns
+1. Search for an existing PNG file in `--image-dir` with naming pattern: `<prefix><plane><tpc>x<columns>.png`
+  - Example without prefix: `U0x256.png` for U plane TPC 0 with 256 columns
+  - Example with `--image-prefix run42_`: `run42_U0x256.png`
 
 2. If not found and `--columns` is specified, generate a test image with:
    - Dimensions: `<columns> × <expected_rows>`
   - Pixel values: `(row << 8) | (col & 0xff)`
-   - Saved to `--image-dir` with the standard naming pattern
+  - Saved to `--image-dir` with the configured prefix and standard naming pattern
 
 ## Consistency Requirements
 

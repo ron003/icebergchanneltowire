@@ -66,6 +66,7 @@ This will generate test PNG files and create `test.pcap` automatically.
   --u0 /path/to/u0.png \
   --u1 /path/to/u1.png \
   --image-dir ./generated_images \
+   --image-prefix run42_ \
   --columns 128 \
   --output partial.pcap
 ```
