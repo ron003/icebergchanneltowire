@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <array>
 #include <vector>
 #include <map>
 #include <string>
@@ -29,9 +31,155 @@
 #include <algorithm>
 
 #include "TRACE/trace.h"
+#include "fddetdataformats/WIBEthFrame.hpp"
 #include "IcebergWireChannelMap.hpp"
 #include "PngImageLoader.hpp"
 #include "PcapWriter.hpp"
+
+namespace {
+
+using dunedaq::fddetdataformats::WIBEthFrame;
+
+constexpr uint16_t kChannelsPerPacket = WIBEthFrame::s_num_channels;
+constexpr uint16_t kTicksPerPacket = WIBEthFrame::s_time_samples_per_frame;
+constexpr uint16_t kMax14BitAdc = (1u << WIBEthFrame::s_bits_per_adc) - 1u;
+
+struct EthernetHeader {
+  std::array<uint8_t, 6> dst_mac;
+  std::array<uint8_t, 6> src_mac;
+  uint16_t ether_type;
+} __attribute__((packed));
+
+struct IPv4Header {
+  uint8_t version_ihl;
+  uint8_t dscp_ecn;
+  uint16_t total_length;
+  uint16_t identification;
+  uint16_t flags_fragment_offset;
+  uint8_t ttl;
+  uint8_t protocol;
+  uint16_t checksum;
+  uint32_t src_ip;
+  uint32_t dst_ip;
+} __attribute__((packed));
+
+struct UDPHeader {
+  uint16_t src_port;
+  uint16_t dst_port;
+  uint16_t length;
+  uint16_t checksum;
+} __attribute__((packed));
+
+static_assert(sizeof(EthernetHeader) == 14, "Unexpected Ethernet header size");
+static_assert(sizeof(IPv4Header) == 20, "Unexpected IPv4 header size");
+static_assert(sizeof(UDPHeader) == 8, "Unexpected UDP header size");
+
+uint16_t
+compute_ipv4_checksum(const uint8_t* data, size_t length)
+{
+  uint32_t sum = 0;
+  for (size_t index = 0; index + 1 < length; index += 2) {
+    sum += (static_cast<uint32_t>(data[index]) << 8) | data[index + 1];
+  }
+  if ((length & 1U) != 0U) {
+    sum += static_cast<uint32_t>(data[length - 1]) << 8;
+  }
+  while ((sum >> 16) != 0U) {
+    sum = (sum & 0xFFFFU) + (sum >> 16);
+  }
+  return static_cast<uint16_t>(~sum & 0xFFFFU);
+}
+
+uint16_t
+clamp_to_14bit(uint16_t value)
+{
+  return std::min<uint16_t>(value, kMax14BitAdc);
+}
+
+WIBEthFrame
+build_wib_frame(const std::vector<std::vector<uint16_t>>& pixel_data_block,
+                uint16_t channel_offset,
+                uint16_t tick_offset,
+                uint16_t packet_index,
+                uint64_t timestamp,
+                uint16_t sequence_id)
+{
+  WIBEthFrame frame {};
+
+  frame.daq_header.version = 1;
+  frame.daq_header.det_id = 3;
+  frame.daq_header.crate_id = 1;
+  frame.daq_header.slot_id = 2;
+  frame.daq_header.stream_id = packet_index;
+  frame.daq_header.reserved = 0;
+  frame.daq_header.seq_id = sequence_id & 0x0FFFu;
+  frame.daq_header.block_length = sizeof(WIBEthFrame) / sizeof(WIBEthFrame::word_t);
+  frame.set_timestamp(timestamp);
+
+  frame.header.channel = packet_index;
+  frame.header.version = 1;
+  frame.header.context = packet_index & 0xFFu;
+  frame.header.ready = 1;
+  frame.header.link_valid = 0x3u;
+  frame.header.wib_sync = 1;
+  frame.header.femb_sync = 0x3u;
+  frame.header.colddata_timestamp_0 = timestamp & 0x7FFFu;
+  frame.header.colddata_timestamp_1 = (timestamp >> 15) & 0x7FFFu;
+  frame.header.extra_data = 0;
+
+  for (uint16_t sample = 0; sample < kTicksPerPacket; ++sample) {
+    for (uint16_t channel = 0; channel < kChannelsPerPacket; ++channel) {
+      uint16_t const adc = clamp_to_14bit(pixel_data_block[channel_offset + channel][tick_offset + sample]);
+      frame.set_adc(channel, sample, adc);
+    }
+  }
+
+  return frame;
+}
+
+std::vector<uint8_t>
+build_network_packet(const WIBEthFrame& frame, uint16_t packet_id)
+{
+  size_t constexpr ethernet_header_size = sizeof(EthernetHeader);
+  size_t constexpr ip_header_size = sizeof(IPv4Header);
+  size_t constexpr udp_header_size = sizeof(UDPHeader);
+  size_t constexpr payload_size = sizeof(WIBEthFrame);
+  size_t constexpr packet_size = ethernet_header_size + ip_header_size + udp_header_size + payload_size;
+
+  std::vector<uint8_t> packet(packet_size, 0);
+
+  auto* ethernet = reinterpret_cast<EthernetHeader*>(packet.data());
+  ethernet->dst_mac = { 0x02, 0x00, 0x00, 0x00, 0x10, 0x01 };
+  ethernet->src_mac = { 0x02, 0x00, 0x00, 0x00, 0x20, static_cast<uint8_t>(packet_id & 0xFFu) };
+  ethernet->ether_type = htons(0x0800);
+
+  auto* ip = reinterpret_cast<IPv4Header*>(packet.data() + ethernet_header_size);
+  ip->version_ihl = 0x45;
+  ip->dscp_ecn = 0;
+  ip->total_length = htons(ip_header_size + udp_header_size + payload_size);
+  ip->identification = htons(packet_id);
+  ip->flags_fragment_offset = htons(0x4000);
+  ip->ttl = 64;
+  ip->protocol = 17;
+  ip->checksum = 0;
+  ip->src_ip = htonl(0x0A000001u + packet_id);
+  ip->dst_ip = htonl(0x0A000101u);
+  ip->checksum = htons(compute_ipv4_checksum(reinterpret_cast<const uint8_t*>(ip), ip_header_size));
+
+  auto* udp = reinterpret_cast<UDPHeader*>(packet.data() + ethernet_header_size + ip_header_size);
+  udp->src_port = htons(static_cast<uint16_t>(40000u + (packet_id % 1000u)));
+  udp->dst_port = htons(50000u);
+  udp->length = htons(udp_header_size + payload_size);
+  udp->checksum = 0;
+
+  std::memcpy(packet.data() + ethernet_header_size + ip_header_size + udp_header_size,
+              &frame,
+              sizeof(frame));
+
+  return packet;
+}
+
+} // namespace
 
 namespace dune {
   struct DuneToolException : public std::runtime_error {
@@ -105,11 +253,11 @@ bool ImagesTopcap::validateImage(const PlaneInfo& plane) {
     return false;
   }
 
-  // Check that columns is a multiple of 64 and <= 512
+  // Check that columns is a positive multiple of 64 and no more than 512.
   if (plane.data.width % 64 != 0 || plane.data.width > 512 || plane.data.width == 0) {
     std::cerr << "ERROR: Plane " << plane.plane_char << plane.tpc_num
               << " has invalid width: " << plane.data.width
-              << " (must be multiple of 64, max 512)" << std::endl;
+              << " (must be a positive multiple of 64, max 512)" << std::endl;
     return false;
   }
 
@@ -219,7 +367,7 @@ bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
                 << "  --image-dir DIR    Directory for auto-generated images (default: '.')" << std::endl
                 << "  --image-prefix STR Prefix prepended to auto image filenames" << std::endl
                 << "  --output FILE      Output PCAP file (default: 'output.pcap')" << std::endl
-                << "  --columns N        Force column count (must be multiple of 64)" << std::endl
+                << "  --columns N        Force column count (must be a positive multiple of 64, max 512)" << std::endl
                 << "  --verbose          Enable verbose output" << std::endl
                 << "  -h, --help         Show this help message" << std::endl;
       return false;
@@ -260,7 +408,7 @@ bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
     else if (arg == "--columns" && i + 1 < argc) {
       common_columns_ = std::atoi(argv[++i]);
       if (common_columns_ % 64 != 0 || common_columns_ > 512 || common_columns_ == 0) {
-        std::cerr << "ERROR: --columns must be a multiple of 64 and at most 512" << std::endl;
+        std::cerr << "ERROR: --columns must be a positive multiple of 64 and at most 512" << std::endl;
         return false;
       }
     }
@@ -468,36 +616,43 @@ bool ImagesTopcap::generatePcap() {
       }
     }
 
-    // For each group of 64 columns
-    uint16_t num_column_groups = common_columns_ / 64;
+    if (total_channels != 1280) {
+      throw std::runtime_error("Expected 1280 offline channels in ICEBERG channel map");
+    }
+    if ((total_channels % kChannelsPerPacket) != 0) {
+      throw std::runtime_error("Offline channel count is not divisible into WIB Ethernet packets");
+    }
 
-    // In a real implementation, this would:
-    // 1. For each column group and each row (wire):
-    //    - Create WireID(cryostat=0, tpc, plane, wire)
-    //    - Call DuneApaWireReadoutGeom::PlaneWireToChannel(wireid) to get offline channel
-    //    - Call TPCChannelMap::get_crate_slot_fiber_chan_from_offline_channel(channel)
-    //    - Build UDP packet with the wire data
-    //    - Write to PCAP
+    uint16_t const num_column_groups = common_columns_ / kTicksPerPacket;
+    uint16_t const packets_per_group = total_channels / kChannelsPerPacket;
+    uint16_t sequence_id = 0;
 
-    // For now, create placeholder packets while using the real wire-to-channel map.
     for (uint16_t col_group = 0; col_group < num_column_groups; ++col_group) {
-      uint32_t packet_size = 1024;
-      std::vector<uint8_t> packet_data(packet_size);
+      uint16_t const tick_offset = col_group * kTicksPerPacket;
+      uint64_t const frame_timestamp = tick_offset;
 
-      memset(packet_data.data(), 0xAA, packet_size);
+      for (uint16_t packet_index = 0; packet_index < packets_per_group; ++packet_index) {
+        uint16_t const channel_offset = packet_index * kChannelsPerPacket;
+        WIBEthFrame const frame = build_wib_frame(pixelDataBlock,
+                                                  channel_offset,
+                                                  tick_offset,
+                                                  packet_index,
+                                                  frame_timestamp,
+                                                  sequence_id++);
+        uint16_t const packet_id = static_cast<uint16_t>(col_group * packets_per_group + packet_index);
+        std::vector<uint8_t> const packet_data = build_network_packet(frame, packet_id);
 
-      size_t packet_offset = 0;
-      for (auto const& [key, channels] : offline_channels) {
-        if (channels.empty() || packet_offset + sizeof(uint32_t) > packet_data.size()) {
-          continue;
+        if (args_.verbose) {
+          std::cout << "Writing packet group " << col_group
+                    << ", packet " << packet_index
+                    << ", channels " << channel_offset << "-"
+                    << (channel_offset + kChannelsPerPacket - 1)
+                    << ", ticks " << tick_offset << "-"
+                    << (tick_offset + kTicksPerPacket - 1) << std::endl;
         }
 
-        uint32_t const channel = channels[col_group % channels.size()];
-        std::memcpy(packet_data.data() + packet_offset, &channel, sizeof(channel));
-        packet_offset += sizeof(channel);
+        pcap.writePacket(packet_data.data(), packet_data.size());
       }
-
-      pcap.writePacket(packet_data.data(), packet_data.size());
     }
 
     std::cout << "PCAP file generated successfully" << std::endl;

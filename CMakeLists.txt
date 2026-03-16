@@ -37,6 +37,8 @@ daq_add_application(images-to-pcap
 
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/apps"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../sourcecode/fddetdataformats/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../sourcecode/detdataformats/include"
 #    "${CMAKE_CURRENT_SOURCE_DIR}/apps/larcoreobj"
 )
 
