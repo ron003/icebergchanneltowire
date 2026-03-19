@@ -13,6 +13,7 @@ project(icebergchanneltowire VERSION 0.0.0)
 find_package(daq-cmake REQUIRED)
 find_package(TRACE REQUIRED)
 find_package(PNG REQUIRED)
+find_package(fddetdataformats REQUIRED)
 
 daq_setup_environment()
 
@@ -33,7 +34,7 @@ daq_add_application(images-to-pcap
     images-to-pcap.cxx 
     PngImageLoader.cpp 
     PcapWriter.cpp 
-    LINK_LIBRARIES TRACE::TRACE PNG::PNG icebergwirechannelmap)
+    LINK_LIBRARIES TRACE::TRACE PNG::PNG fddetdataformats::fddetdataformats icebergwirechannelmap)
 
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/apps"
