@@ -36,6 +36,10 @@ daq_add_application(images-to-pcap
     PcapWriter.cpp 
     LINK_LIBRARIES TRACE::TRACE PNG::PNG fddetdataformats::fddetdataformats icebergwirechannelmap)
 
+daq_add_application(dune-pcap
+    dune-pcap.cxx 
+    LINK_LIBRARIES TRACE::TRACE icebergwirechannelmap)
+
 include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/apps"
     "${CMAKE_CURRENT_SOURCE_DIR}/../sourcecode/fddetdataformats/include"
