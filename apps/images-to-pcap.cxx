@@ -629,9 +629,11 @@ bool ImagesTopcap::generatePcap() {
 
     for (uint16_t col_group = 0; col_group < num_column_groups; ++col_group) {
       uint16_t const tick_offset = col_group * kTicksPerPacket;
-      uint64_t const frame_timestamp = tick_offset;
 
       for (uint16_t packet_index = 0; packet_index < packets_per_group; ++packet_index) {
+        uint16_t const packet_id = static_cast<uint16_t>(col_group * packets_per_group + packet_index);
+        uint64_t const timestamp_group = packet_id / 20u;
+        uint64_t const frame_timestamp = timestamp_group * 2048u;
         uint16_t const channel_offset = packet_index * kChannelsPerPacket;
         WIBEthFrame const frame = build_wib_frame(pixelDataBlock,
                                                   channel_offset,
@@ -639,7 +641,6 @@ bool ImagesTopcap::generatePcap() {
                                                   packet_index,
                                                   frame_timestamp,
                                                   sequence_id++);
-        uint16_t const packet_id = static_cast<uint16_t>(col_group * packets_per_group + packet_index);
         std::vector<uint8_t> const packet_data = build_network_packet(frame, packet_id);
 
         if (args_.verbose) {
