@@ -248,8 +248,9 @@ void PngImageLoader::saveImage(const std::string& filename,
       PNG_FILTER_TYPE_DEFAULT
     );
 
-    // Use reasonable compression for output images
-    png_set_compression_level(png, 6);
+    // Keep output images close to raw size for easier inspection (no compression).
+    png_set_compression_level(png, 0);
+    png_set_filter(png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE);
 
     png_write_info(png, info);
 
