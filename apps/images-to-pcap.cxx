@@ -124,6 +124,9 @@ build_wib_frame(const std::vector<std::vector<uint16_t>>& pixel_data_block,
   // If a channel map is available, use the coordinates for the first offline
   // channel in this packet to populate crate/slot/stream and the packet channel.
   if (global_map) {
+    TLOG_DEBUG(1) << "Building WIB frame for packet " << packet_index
+                  << " with channel offset " << channel_offset
+                  << " and tick offset " << tick_offset;
     uint32_t off_chan0 = static_cast<uint32_t>(channel_offset);
     auto coords = global_map->get_crate_slot_fiber_chan_from_offline_channel(off_chan0);
     constexpr unsigned int n_chan_per_stream = 64;
@@ -220,6 +223,7 @@ struct CommandLineArgs {
   std::string output_file = "output.pcap";
   bool verbose = false;
   uint16_t timestamp_us = 0;
+  std::string plugin = "ICEBERGChannelMap";
 };
 
 // Image plane information
@@ -435,6 +439,9 @@ bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
     else if (arg == "--verbose") {
       args_.verbose = true;
     }
+    else if (arg == "--plugin" && i + 1 < argc) {
+      args_.plugin = argv[++i];
+    }
     else {
       std::cerr << "Unknown argument: " << arg << std::endl;
       return false;
@@ -522,6 +529,15 @@ bool ImagesTopcap::generatePcap() {
   std::cout << "Generating PCAP file: " << args_.output_file << std::endl;
 
   try {
+    // Construct the detchannelmaps instance from the selected plugin.
+    // This populates the global_map used by build_wib_frame.
+    try {
+        global_map = dunedaq::detchannelmaps::make_map(args_.plugin);
+    } catch (const std::exception& e) {
+      std::cerr << "ERROR: Failed to load channel map plugin '" << args_.plugin
+                << "': " << e.what() << std::endl;
+      global_map.reset();
+    }
     PcapWriter pcap(args_.output_file);
     std::map<std::string, std::vector<raw::ChannelID_t>> offline_channels;
 
