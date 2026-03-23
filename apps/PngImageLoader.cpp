@@ -197,3 +197,81 @@ void PngImageLoader::generateTestImage(const std::string& filename,
 
   png_destroy_write_struct(&png, &info);
 }
+
+void PngImageLoader::saveImage(const std::string& filename,
+                               uint16_t width,
+                               uint16_t height,
+                               const std::vector<uint16_t>& pixels) {
+  // Validate input
+  if (pixels.size() != static_cast<size_t>(width) * height) {
+    throw std::runtime_error("Pixel data size mismatch: expected " +
+                            std::to_string(static_cast<size_t>(width) * height) +
+                            ", got " + std::to_string(pixels.size()));
+  }
+
+  // Create PNG structures
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  if (!png) {
+    throw std::runtime_error("Failed to create PNG write structure");
+  }
+
+  png_infop info = png_create_info_struct(png);
+  if (!info) {
+    png_destroy_write_struct(&png, nullptr);
+    throw std::runtime_error("Failed to create PNG info structure");
+  }
+
+  // Open output file
+  std::ofstream file(filename, std::ios::binary);
+  if (!file.is_open()) {
+    png_destroy_write_struct(&png, &info);
+    throw std::runtime_error("Cannot create PNG file: " + filename);
+  }
+
+  try {
+    // Set up error handling
+    if (setjmp(png_jmpbuf(png))) {
+      throw std::runtime_error("PNG writing error: " + filename);
+    }
+
+    // Set write callback
+    png_set_write_fn(png, &file, png_write_callback, nullptr);
+
+    // Set PNG info
+    png_set_IHDR(
+      png, info,
+      width, height,
+      16,                    // bit_depth
+      PNG_COLOR_TYPE_GRAY,   // color_type
+      PNG_INTERLACE_NONE,
+      PNG_COMPRESSION_TYPE_DEFAULT,
+      PNG_FILTER_TYPE_DEFAULT
+    );
+
+    // Use reasonable compression for output images
+    png_set_compression_level(png, 6);
+
+    png_write_info(png, info);
+
+    // Set byte order for 16-bit values
+    png_set_swap(png);
+
+    // Set up row pointers
+    std::vector<png_bytep> row_pointers(height);
+    for (uint32_t y = 0; y < height; ++y) {
+      row_pointers[y] = reinterpret_cast<png_bytep>(
+        const_cast<uint16_t*>(pixels.data() + (static_cast<size_t>(y) * width))
+      );
+    }
+
+    png_write_image(png, row_pointers.data());
+
+    png_write_end(png, nullptr);
+
+  } catch (...) {
+    png_destroy_write_struct(&png, &info);
+    throw;
+  }
+
+  png_destroy_write_struct(&png, &info);
+}

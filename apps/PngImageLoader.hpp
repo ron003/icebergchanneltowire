@@ -36,6 +36,18 @@ public:
   static void generateTestImage(const std::string& filename, 
                                 uint16_t width, 
                         uint16_t height);
+
+  /**
+   * @brief Save a 16-bit grayscale PNG image
+   * @param filename Path where to save the PNG file
+   * @param width Image width
+   * @param height Image height
+   * @param pixels 16-bit grayscale pixel data, row-major order
+   */
+  static void saveImage(const std::string& filename,
+                        uint16_t width,
+                        uint16_t height,
+                        const std::vector<uint16_t>& pixels);
 };
 
 #endif // ICEBERG_CHANNEL_TO_WIRE_PNG_IMAGE_LOADER_HPP
