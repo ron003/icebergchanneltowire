@@ -85,13 +85,13 @@ int main(int argc, char* argv[]) {
   // Skip the global header (24 bytes)
   infile.seekg(24);
 
-  std::cout << "Pkt timestamp        ";
+  std::cout << "Pkt timestamp        crate slot stream ";
   if (print_delta) {
     std::cout << std::left << std::setw(delta_width) << "delta" << std::right << ' ';
   }
   std::cout << "UDPbyts" << std::endl;
 
-  std::cout << "--- ---------------- ";
+  std::cout << "--- ---------------- ----- ---- ------ ";
   if (print_delta) {
     std::cout << std::string(static_cast<size_t>(delta_width), '-') << ' ';
   }
@@ -163,12 +163,20 @@ int main(int argc, char* argv[]) {
 
     const auto* daq_header = reinterpret_cast<const dunedaq::detdataformats::DAQEthHeader*>(data + udp_payload_offset);
     const uint64_t timestamp = daq_header->get_timestamp();
+    const unsigned crate_id = daq_header->crate_id;
+    const unsigned slot_id  = daq_header->slot_id;
+    const unsigned stream_id= daq_header->stream_id;
 
     std::ostringstream output;
     output << std::setw(3) << std::setfill(' ') << packet_count
            << ' '
            << std::hex << std::setw(16) << std::setfill('0') << timestamp
            << std::dec;
+
+    // print crate/slot/stream columns (reset fill to space)
+    output << ' ' << std::setw(5) << std::setfill(' ') << crate_id
+           << ' ' << std::setw(4) << std::setfill(' ') << slot_id
+           << ' ' << std::setw(6) << std::setfill(' ') << stream_id;
 
     if (print_delta) {
       output << ' ';
@@ -187,4 +195,4 @@ int main(int argc, char* argv[]) {
   }
 
   return 0;
-}   
+}

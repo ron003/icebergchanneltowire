@@ -14,6 +14,7 @@ find_package(daq-cmake REQUIRED)
 find_package(TRACE REQUIRED)
 find_package(PNG REQUIRED)
 find_package(fddetdataformats REQUIRED)
+find_package(detchannelmaps REQUIRED)
 
 daq_setup_environment()
 
@@ -34,7 +35,7 @@ daq_add_application(images-to-pcap
     images-to-pcap.cxx 
     PngImageLoader.cpp 
     PcapWriter.cpp 
-    LINK_LIBRARIES TRACE::TRACE PNG::PNG fddetdataformats::fddetdataformats icebergwirechannelmap)
+    LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
 
 daq_add_application(dune-pcap
     dune-pcap.cxx 

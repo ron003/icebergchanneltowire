@@ -35,8 +35,13 @@
 #include "IcebergWireChannelMap.hpp"
 #include "PngImageLoader.hpp"
 #include "PcapWriter.hpp"
+// detchannelmaps factory
+#include "detchannelmaps/TPCChannelMap.hpp"
 
 namespace {
+
+// global channel-map instance (constructed at runtime from --plugin)
+std::shared_ptr<dunedaq::detchannelmaps::TPCChannelMap> global_map;
 
 using dunedaq::fddetdataformats::WIBEthFrame;
 
@@ -105,18 +110,33 @@ build_wib_frame(const std::vector<std::vector<uint16_t>>& pixel_data_block,
                 uint16_t sequence_id)
 {
   WIBEthFrame frame {};
-
   frame.daq_header.version = 1;
   frame.daq_header.det_id = 3;
-  frame.daq_header.crate_id = 1;
-  frame.daq_header.slot_id = 2;
+  // Default values in case global_map is not set
+  frame.daq_header.crate_id = 0;
+  frame.daq_header.slot_id = 0;
   frame.daq_header.stream_id = packet_index;
   frame.daq_header.reserved = 0;
   frame.daq_header.seq_id = sequence_id & 0x0FFFu;
   frame.daq_header.block_length = sizeof(WIBEthFrame) / sizeof(WIBEthFrame::word_t);
   frame.set_timestamp(timestamp);
 
-  frame.header.channel = packet_index;
+  // If a channel map is available, use the coordinates for the first offline
+  // channel in this packet to populate crate/slot/stream and the packet channel.
+  if (global_map) {
+    uint32_t off_chan0 = static_cast<uint32_t>(channel_offset);
+    auto coords = global_map->get_crate_slot_fiber_chan_from_offline_channel(off_chan0);
+    constexpr unsigned int n_chan_per_stream = 64;
+    const unsigned int out_stream = ((coords->fiber & 0x1U) << 6) | ((coords->channel / n_chan_per_stream) & 0x3U);
+    const unsigned int out_chan = coords->channel % n_chan_per_stream;
+
+    frame.daq_header.crate_id = static_cast<uint16_t>(coords->crate);
+    frame.daq_header.slot_id = static_cast<uint16_t>(coords->slot);
+    frame.daq_header.stream_id = static_cast<uint16_t>(out_stream);
+    frame.header.channel = static_cast<uint16_t>(out_chan);
+  } else {
+    frame.header.channel = packet_index;
+  }
   frame.header.version = 1;
   frame.header.context = packet_index & 0xFFu;
   frame.header.ready = 1;
