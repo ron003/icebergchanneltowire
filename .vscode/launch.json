@@ -1,0 +1,90 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug images-to-pcap",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/../build/icebergchanneltowire/apps/images-to-pcap",
+            "args": [
+                "--columns", "64",
+                "--output", "${workspaceFolder}/../output.pcap"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/..",
+            "environment": [
+                {
+                    "name": "DBT_AREA_ROOT",
+                    "value": "/home/ron/work/DUNEPrj/test_root"
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": "/home/ron/work/DUNEPrj/test_root/install/lib64:/home/ron/work/DUNEPrj/test_root/install/lib:/home/ron/work/DUNEPrj/test_root/install/icebergchanneltowire/lib64:/home/ron/work/DUNEPrj/test_root/install/detchannelmaps/lib64:/home/ron/work/DUNEPrj/test_root/install/fddetdataformats/lib64:/home/ron/work/DUNEPrj/test_root/install/detdataformats/lib64:/home/ron/work/DUNEPrj/test_root/install/ers/lib64:/home/ron/work/DUNEPrj/test_root/install/logging/lib64:/home/ron/work/DUNEPrj/test_root/externals/lib"
+                },
+                {
+                    "name": "CET_PLUGIN_PATH",
+                    "value": "/home/ron/work/DUNEPrj/test_root/install/detchannelmaps/lib64"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "sourceFileMap": {
+                "/home/ron/work/DUNEPrj/test_root/sourcecode": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Debug pcap-to-images",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/../build/icebergchanneltowire/apps/pcap-to-images",
+            "args": [
+                "${workspaceFolder}/../output.pcap"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/..",
+            "environment": [
+                {
+                    "name": "DBT_AREA_ROOT",
+                    "value": "/home/ron/work/DUNEPrj/test_root"
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": "/home/ron/work/DUNEPrj/test_root/install/lib64:/home/ron/work/DUNEPrj/test_root/install/lib:/home/ron/work/DUNEPrj/test_root/install/icebergchanneltowire/lib64:/home/ron/work/DUNEPrj/test_root/install/detchannelmaps/lib64:/home/ron/work/DUNEPrj/test_root/install/fddetdataformats/lib64:/home/ron/work/DUNEPrj/test_root/install/detdataformats/lib64:/home/ron/work/DUNEPrj/test_root/install/ers/lib64:/home/ron/work/DUNEPrj/test_root/install/logging/lib64:/home/ron/work/DUNEPrj/test_root/externals/lib"
+                },
+                {
+                    "name": "CET_PLUGIN_PATH",
+                    "value": "/home/ron/work/DUNEPrj/test_root/install/detchannelmaps/lib64"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "sourceFileMap": {
+                "/home/ron/work/DUNEPrj/test_root/sourcecode": "${workspaceFolder}"
+            }
+        }
+    ]
+}
