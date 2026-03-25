@@ -531,6 +531,7 @@ bool ImagesTopcap::generatePcap() {
   try {
     // Construct the detchannelmaps instance from the selected plugin.
     // This populates the global_map used by build_wib_frame.
+    TLOG_DEBUG(1) << "Loading channel map plugin: " << args_.plugin;
     try {
         global_map = dunedaq::detchannelmaps::make_map(args_.plugin);
     } catch (const std::exception& e) {
@@ -702,6 +703,8 @@ bool ImagesTopcap::generatePcap() {
 }
 
 int main(int argc, char* argv[]) {
+  setenv("TRACE_MSGMAX", "0", 1);
+  TRACE_CNTL("reset");
   try {
     ImagesTopcap converter;
 
