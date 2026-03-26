@@ -33,7 +33,7 @@ main(int argc, char** argv)
 
     auto printHelp = [argv]() {
       printf("Usage:\n");
-      printf("  %s [--one-line] <offline_chan>\n", basename(argv[0]));
+      printf("  %s [--one-line] <offline_chan>  # really goes to plane,tpc,wire\n", basename(argv[0]));
       printf("  %s [--one-line] --plane=<plane> --tpc=<tpc> --wire=<wire>\n", basename(argv[0]));
       printf("\n");
       printf("Options:\n");
@@ -105,32 +105,32 @@ main(int argc, char** argv)
 
     if (reverseMode) {
       WireID wid(0, tpc, plane, wire);
-      unsigned chan = readout.PlaneWireToChannel(wid);
-      TLOG()<<"off_chan: "<<chan
+      unsigned off_chan = readout.PlaneWireToChannel(wid);
+      TLOG()<<"off_chan: "<<off_chan
             <<" tpc="<<tpc<<" plane="<<plane<<" wire: "<<wire;
       return 0;
     }
 
-    unsigned chan = strtoul(argv[chanArgIndex], NULL, 0);
+    unsigned off_chan = strtoul(argv[chanArgIndex], NULL, 0);
 
     std::string sview = "UVZ";
-    auto wids = readout.ChannelToWire(chan);
+    auto wids = readout.ChannelToWire(off_chan);
 
     if (oneLineMode) {
       if (wids.size() == 1) {
-        TLOG()<<"off_chan: "<<std::setw(4)<<chan<<std::setw(0)
+        TLOG()<<"off_chan: "<<std::setw(4)<<off_chan<<std::setw(0)
               <<" tpc="<<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire: "<<std::setw(3)<<wids[0].Wire
               <<" image: "<<std::setw(0)<<(wids[0].TPC + wids[0].Plane*2);
       }
       if (wids.size() > 1) {
-        TLOG()<<"off_chan:"<<std::setw(4)<<chan<<std::setw(0)
+        TLOG()<<"off_chan:"<<std::setw(4)<<off_chan<<std::setw(0)
               <<" tpc="<<wids[0].TPC<<" plane="<<sview[wids[0].Plane]<<" wire: "<<std::setw(3)<<wids[0].Wire
               <<" and tpc="<<wids[1].TPC<<" plane="<<sview[wids[1].Plane]<<" wire: "<<std::setw(3)<<wids[1].Wire
               <<" images: "<<std::setw(0)<<(wids[0].TPC + wids[0].Plane*2)<<","<<std::setw(0)<<(wids[1].TPC + wids[1].Plane*2);
       }
     } else {
       for (size_t i = 0; i < wids.size(); ++i) {
-        TLOG()<<"off_chan: "<<std::setw(4)<<chan<<std::setw(0)
+        TLOG()<<"off_chan: "<<std::setw(4)<<off_chan<<std::setw(0)
               <<" tpc="<<wids[i].TPC<<" plane="<<sview[wids[i].Plane]<<" wire: "<<std::setw(3)<<wids[i].Wire
               <<" image: "<<std::setw(0)<<(wids[i].TPC + wids[i].Plane*2);
       }

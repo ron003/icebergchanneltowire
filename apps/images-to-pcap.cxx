@@ -663,44 +663,105 @@ bool ImagesTopcap::generatePcap() {
     if ((total_channels % kChannelsPerPacket) != 0) {
       throw std::runtime_error("Offline channel count is not divisible into WIB Ethernet packets");
     }
+    if (!global_map) {
+      throw std::runtime_error("Channel map is required for offline-channel-based packet generation");
+    }
+
+    constexpr uint16_t kPacketsPerGroup = 20;  // 1280 channels / 64 channels per packet
+    constexpr unsigned int n_chan_per_stream = 64;
+    constexpr unsigned int n_slot_offset = 2;  // for ICEBERGChannelMap
 
     uint16_t const num_column_groups = common_columns_ / kTicksPerPacket;
-    uint16_t const packets_per_group = total_channels / kChannelsPerPacket;
     uint16_t sequence_id = 0;
 
     for (uint16_t col_group = 0; col_group < num_column_groups; ++col_group) {
       uint16_t const tick_offset = col_group * kTicksPerPacket;
+      uint64_t const frame_timestamp = static_cast<uint64_t>(col_group) * 2048u;
 
-      for (uint16_t packet_index = 0; packet_index < packets_per_group; ++packet_index) {
-        uint16_t const packet_id = static_cast<uint16_t>(col_group * packets_per_group + packet_index);
-        uint64_t const timestamp_group = packet_id / 20u;
-        uint64_t const frame_timestamp = timestamp_group * 2048u;
-        uint16_t const channel_offset = packet_index * kChannelsPerPacket;
-        TLOG_DEBUG(2) << "Building frame for packet_id=" << packet_id
+      // Initialize all 20 packets for this column group
+      std::vector<WIBEthFrame> frames(kPacketsPerGroup);
+      for (uint16_t pkt_idx = 0; pkt_idx < kPacketsPerGroup; ++pkt_idx) {
+        WIBEthFrame& frame = frames[pkt_idx];
+        frame = {};  // zero-initialize
+        frame.daq_header.version = 1;
+        frame.daq_header.det_id = 3;
+        frame.daq_header.crate_id = 0;
+        frame.daq_header.slot_id = 0;
+        frame.daq_header.stream_id = 0;
+        frame.daq_header.reserved = 0;
+        frame.daq_header.seq_id = (sequence_id + pkt_idx) & 0x0FFFu;
+        frame.daq_header.block_length = sizeof(WIBEthFrame) / sizeof(WIBEthFrame::word_t);
+        frame.set_timestamp(frame_timestamp);
+        frame.header.version = 1;
+        frame.header.context = pkt_idx & 0xFFu;
+        frame.header.ready = 1;
+        frame.header.link_valid = 0x3u;
+        frame.header.wib_sync = 1;
+        frame.header.femb_sync = 0x3u;
+        frame.header.colddata_timestamp_0 = frame_timestamp & 0x7FFFu;
+        frame.header.colddata_timestamp_1 = (frame_timestamp >> 15) & 0x7FFFu;
+        frame.header.extra_data = 0;
+      }
+
+      // Loop over offline channels and populate frames using channel map
+      for (uint32_t off_chan = 0; off_chan < total_channels; ++off_chan) {
+        auto coords = global_map->get_crate_slot_fiber_chan_from_offline_channel(off_chan);
+        if (!coords.has_value()) {
+          TLOG_DEBUG(1) << "No hardware coordinates for offline channel " << off_chan;
+          continue;
+        }
+
+        // Derive packet index, stream, and stream channel from coordinates
+        // (see detchannelmaps/apps/run_channel_map_api.cxx lines 87-113)
+        unsigned int const out_stream_idx = (coords->channel / n_chan_per_stream) + (coords->fiber << 2);
+        unsigned int const out_stream = ((coords->fiber & 0x1U) << 6) | ((coords->channel / n_chan_per_stream) & 0x3U);
+        unsigned int const out_chan = coords->channel % n_chan_per_stream;
+        unsigned int const packet_index = ((coords->slot - n_slot_offset) << 3) + out_stream_idx;
+
+        if (packet_index >= kPacketsPerGroup) {
+          TLOG_DEBUG(1) << "Packet index " << packet_index << " out of range for channel " << off_chan;
+          continue;
+        }
+
+        WIBEthFrame& frame = frames[packet_index];
+        // Set header fields from first channel encountered in this packet
+        // (crate/slot/stream are the same for all 64 channels in a packet)
+        if (frame.daq_header.crate_id == 0 && frame.daq_header.slot_id == 0 && frame.daq_header.stream_id == 0) {
+          frame.daq_header.crate_id = static_cast<uint16_t>(coords->crate);
+          frame.daq_header.slot_id = static_cast<uint16_t>(coords->slot);
+          frame.daq_header.stream_id = static_cast<uint16_t>(out_stream);
+          frame.header.channel = static_cast<uint16_t>(out_chan);
+        }
+
+        // Fill ADC values for this channel across all time samples
+        for (uint16_t sample = 0; sample < kTicksPerPacket; ++sample) {
+          uint16_t const adc = clamp_to_14bit(pixelDataBlock[off_chan][tick_offset + sample]);
+          frame.set_adc(out_chan, sample, adc);
+        }
+      }
+
+      // Write all 20 packets for this column group
+      for (uint16_t pkt_idx = 0; pkt_idx < kPacketsPerGroup; ++pkt_idx) {
+        uint16_t const packet_id = static_cast<uint16_t>(col_group * kPacketsPerGroup + pkt_idx);
+        std::vector<uint8_t> const packet_data = build_network_packet(frames[pkt_idx], packet_id);
+
+        TLOG_DEBUG(2) << "Writing frame for packet_id=" << packet_id
                       << " (col_group=" << col_group
-                      << ", channel_offset=" << channel_offset
+                      << ", pkt_idx=" << pkt_idx
                       << ", tick_offset=" << tick_offset
                       << ", timestamp=" << frame_timestamp
-                      << ", sequence_id=" << sequence_id << ")";
-        WIBEthFrame const frame = build_wib_frame(pixelDataBlock,
-                                                  channel_offset,
-                                                  tick_offset,
-                                                  packet_index,
-                                                  frame_timestamp,
-                                                  sequence_id++);
-        std::vector<uint8_t> const packet_data = build_network_packet(frame, packet_id);
+                      << ", sequence_id=" << (sequence_id + pkt_idx) << ")";
 
         if (args_.verbose) {
           std::cout << "Writing packet group " << col_group
-                    << ", packet " << packet_index
-                    << ", channels " << channel_offset << "-"
-                    << (channel_offset + kChannelsPerPacket - 1)
+                    << ", packet " << pkt_idx
                     << ", ticks " << tick_offset << "-"
                     << (tick_offset + kTicksPerPacket - 1) << std::endl;
         }
 
         pcap.writePacket(packet_data.data(), packet_data.size());
       }
+      sequence_id += kPacketsPerGroup;
     }
 
     std::cout << "PCAP file generated successfully" << std::endl;
