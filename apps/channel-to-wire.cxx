@@ -33,7 +33,7 @@ main(int argc, char** argv)
 
     auto printHelp = [argv]() {
       printf("Usage:\n");
-      printf("  %s [--one-line] <online_chan>\n", basename(argv[0]));
+      printf("  %s [--one-line] <offline_chan>\n", basename(argv[0]));
       printf("  %s [--one-line] --plane=<plane> --tpc=<tpc> --wire=<wire>\n", basename(argv[0]));
       printf("\n");
       printf("Options:\n");
@@ -45,7 +45,7 @@ main(int argc, char** argv)
       printf("\n");
       printf("Notes:\n");
       printf("  If any of --plane=, --tpc=, or --wire= is given, all three are required.\n");
-      printf("  In reverse mode, <online_chan> must not be provided.\n");
+      printf("  In reverse mode, <offline_chan> must not be provided.\n");
       printf("  Reverse mode uses cryostat 0 when constructing WireID.\n");
     };
 
@@ -92,7 +92,7 @@ main(int argc, char** argv)
     }
 
     if (reverseMode && nPositionalArgs > 0) {
-      TLOG_ERROR()<<"Do not provide <online_chan> when using --plane=, --tpc=, and --wire=.";
+      TLOG_ERROR()<<"Do not provide <offline_chan> when using --plane=, --tpc=, and --wire=.";
       return 1;
     }
 

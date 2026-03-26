@@ -116,6 +116,10 @@ build_wib_frame(const std::vector<std::vector<uint16_t>>& pixel_data_block,
   frame.daq_header.crate_id = 0;
   frame.daq_header.slot_id = 0;
   frame.daq_header.stream_id = packet_index;
+  TLOG_DEBUG(2) << "Setting DAQ header: det_id=" << frame.daq_header.det_id
+                << ", crate_id=" << frame.daq_header.crate_id
+                << ", slot_id=" << frame.daq_header.slot_id
+                << ", stream_id=" << frame.daq_header.stream_id;
   frame.daq_header.reserved = 0;
   frame.daq_header.seq_id = sequence_id & 0x0FFFu;
   frame.daq_header.block_length = sizeof(WIBEthFrame) / sizeof(WIBEthFrame::word_t);
@@ -672,6 +676,12 @@ bool ImagesTopcap::generatePcap() {
         uint64_t const timestamp_group = packet_id / 20u;
         uint64_t const frame_timestamp = timestamp_group * 2048u;
         uint16_t const channel_offset = packet_index * kChannelsPerPacket;
+        TLOG_DEBUG(2) << "Building frame for packet_id=" << packet_id
+                      << " (col_group=" << col_group
+                      << ", channel_offset=" << channel_offset
+                      << ", tick_offset=" << tick_offset
+                      << ", timestamp=" << frame_timestamp
+                      << ", sequence_id=" << sequence_id << ")";
         WIBEthFrame const frame = build_wib_frame(pixelDataBlock,
                                                   channel_offset,
                                                   tick_offset,
