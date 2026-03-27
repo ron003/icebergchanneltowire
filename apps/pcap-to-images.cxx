@@ -431,12 +431,13 @@ bool PcapToImages::readPcap() {
 }
 
 bool PcapToImages::processPackets() {
-  std::cout << "Processing packets with " << args_.loops << " loop(s)..." << std::endl;
+  TLOG() << "Processing packets with " << args_.loops << " loop(s)...";
   
   // Initialize plane pixel data and channel mappings
   initializePlanePixelData();
   
   for (uint32_t loop = 0; loop < args_.loops; ++loop) {
+
     if (args_.verbose || args_.loops > 1) {
       std::cout << "Loop " << (loop + 1) << " of " << args_.loops << std::endl;
     }
