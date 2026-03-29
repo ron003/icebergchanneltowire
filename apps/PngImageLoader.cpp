@@ -169,13 +169,13 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     // Set byte order for 16-bit values
     png_set_swap(png);
 
-    // Encode the row in the high byte and the column in the low byte.
+    // Encode the column (timetick) in the high byte and the row (wire) in the low byte.
     std::vector<uint16_t> image_data(static_cast<size_t>(width) * height);
     std::vector<png_bytep> row_pointers(height);
 
     TLOG_DEBUG(1) << "Generating test image: " << filename
                  << " (" << width << "x" << height
-                 << ") with value formula (row << 8) | (col & 0xff)";
+                 << ") with value formula ((col & 0x3f) << 8) | (row & 0xff)";
     for (uint32_t y = 0; y < height; ++y) {
       for (uint32_t x = 0; x < width; ++x) {
         image_data[(static_cast<size_t>(y) * width) + x] =

@@ -570,9 +570,20 @@ bool ImagesTopcap::generatePcap() {
       auto const& channels = offline_channels.at(key);
       uint16_t const ncols = std::min(plane.data.width, common_columns_);
       for (unsigned int wire = 0; wire < plane.data.height; ++wire) {
-        if (wire >= channels.size()) continue;
+        if (wire >= channels.size()) {
+          TLOG_ERROR() << "Wire index " << wire << " exceeds channel mapping for plane "
+                      << plane.plane_char << plane.tpc_num;
+          return false;
+        }
         raw::ChannelID_t const ch = channels[wire];
-        if (ch >= total_channels) continue;
+        if (ch >= total_channels) {
+          TLOG_ERROR() << "Channel index " << ch << " exceeds total channels for plane "
+                      << plane.plane_char << plane.tpc_num;
+          return false;
+        }
+        TLOG_DEBUG(2) << "Mapping plane " << key << " wire " << std::setw(3) << wire
+                      << " data[col=0] " << std::setw(4) << std::hex << plane.data.pixels[wire * plane.data.width]
+                      << " to offline channel " << std::dec << ch;
         for (uint16_t col = 0; col < ncols; ++col) {
           pixelDataBlock[ch][col] = plane.data.pixels[wire * plane.data.width + col];
         }
@@ -588,71 +599,66 @@ bool ImagesTopcap::generatePcap() {
     // Debug logging: 32 timeticks per log line, one line per channel per window
     for (unsigned int ch = 0; ch < total_channels; ++ch) {
       TLOG_DEBUG_SCOPED(10) {
-        TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex;
-        for (uint16_t col = 0; col < 32; ++col) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex << std::setfill('0');
+        for (uint16_t col = 0; col < 16; ++col)
           TLOG_ADD << " " << pixelDataBlock[ch][col];
-        }
       }
       TLOG_DEBUG_SCOPED(11) {
-        TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 32<<":"<<std::hex;
-        for (uint16_t col = 32; col < 64; ++col) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex << std::setfill('0');
+        for (uint16_t col = 16; col < 32; ++col)
           TLOG_ADD << " " << pixelDataBlock[ch][col];
-        }
+      }
+      TLOG_DEBUG_SCOPED(12) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 32<<":"<<std::hex << std::setfill('0');
+        for (uint16_t col = 32; col < 64; ++col)
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
       }
       if (common_columns_ > 64) {
-        TLOG_DEBUG_SCOPED(12) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 64<<":" << std::hex;
-          for (uint16_t col = 64; col < 96; ++col) {
-            TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }          
-        }
         TLOG_DEBUG_SCOPED(13) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 96<<":" << std::hex;
-          for (uint16_t col = 96; col < 128; ++col) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 64<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 64; col < 96; ++col)
             TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }          
+        }
+        TLOG_DEBUG_SCOPED(14) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 96<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 96; col < 128; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
         }
       }
       if (common_columns_ > 128) {
-        TLOG_DEBUG_SCOPED(14) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 128<<":" << std::hex;
-          for (uint16_t col = 128; col < 160; ++col) {
-            TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }          
-        }
         TLOG_DEBUG_SCOPED(15) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 160<<":" << std::hex;
-          for (uint16_t col = 160; col < 192; ++col) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 128<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 128; col < 160; ++col)
             TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }
+        }
+        TLOG_DEBUG_SCOPED(16) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 160<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 160; col < 192; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
         }
       }
       if (common_columns_ > 192) {
-        TLOG_DEBUG_SCOPED(16) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 192<<":" << std::hex;
-          for (uint16_t col = 192; col < 224; ++col) {
-            TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }
-        }
         TLOG_DEBUG_SCOPED(17) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 224<<":" << std::hex;
-          for (uint16_t col = 224; col < 256; ++col) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 192<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 192; col < 224; ++col)
             TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }
+        }
+        TLOG_DEBUG_SCOPED(18) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 224<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 224; col < 256; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
         }
       }
       if (common_columns_ > 256) {
-        TLOG_DEBUG_SCOPED(18) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]:" << 256<<":" << std::hex;
-          for (uint16_t col = 256; col < 288; ++col) {
-            TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }
-        }
         TLOG_DEBUG_SCOPED(19) {
-          TLOG_ADD << std::dec << "ch[" << std::setw(4) << ch << "]" << 288<<":" << std::hex;
-          for (uint16_t col = 288; col < 320; ++col) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]:" << 256<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 256; col < 288; ++col)
             TLOG_ADD << " " << pixelDataBlock[ch][col];
-          }
+        }
+        TLOG_DEBUG_SCOPED(20) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 288<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 288; col < 320; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
         }
       }
     }
@@ -707,8 +713,8 @@ bool ImagesTopcap::generatePcap() {
       for (uint32_t off_chan = 0; off_chan < total_channels; ++off_chan) {
         auto coords = global_map->get_crate_slot_fiber_chan_from_offline_channel(off_chan);
         if (!coords.has_value()) {
-          TLOG_DEBUG(1) << "No hardware coordinates for offline channel " << off_chan;
-          continue;
+          TLOG_ERROR() << "No hardware coordinates for offline channel " << off_chan;
+          return false;
         }
 
         // Derive packet index, stream, and stream channel from coordinates
@@ -719,8 +725,8 @@ bool ImagesTopcap::generatePcap() {
         unsigned int const packet_index = ((coords->slot - n_slot_offset) << 3) + out_stream_idx;
 
         if (packet_index >= kPacketsPerGroup) {
-          TLOG_DEBUG(1) << "Packet index " << packet_index << " out of range for channel " << off_chan;
-          continue;
+          TLOG_ERROR() << "Packet index " << packet_index << " out of range for channel " << off_chan;
+          return false;
         }
 
         WIBEthFrame& frame = frames[packet_index];
@@ -733,9 +739,23 @@ bool ImagesTopcap::generatePcap() {
           frame.header.channel = static_cast<uint16_t>(out_chan);
         }
 
+        TLOG_DEBUG(2) << "Mapping offline channel " << off_chan
+                      << " (crate=" << coords->crate
+                      << ", slot=" << coords->slot
+                      << ", fiber=" << coords->fiber
+                      << ", channel=" << coords->channel
+                      << ") to packet_index=" << packet_index
+                      << ", out_stream=" << out_stream
+                      << ", out_chan=" << out_chan;
+
         // Fill ADC values for this channel across all time samples
         for (uint16_t sample = 0; sample < kTicksPerPacket; ++sample) {
           uint16_t const adc = clamp_to_14bit(pixelDataBlock[off_chan][tick_offset + sample]);
+          if (sample == 0) {
+            TLOG_DEBUG(3) << "  ADC values for offline channel " << off_chan
+                          << " (packet_index=" << packet_index
+                          << ", out_chan=" << out_chan << "): " << std::hex << std::setfill('0') << adc;
+          }
           frame.set_adc(out_chan, sample, adc);
         }
       }
@@ -751,13 +771,6 @@ bool ImagesTopcap::generatePcap() {
                       << ", tick_offset=" << tick_offset
                       << ", timestamp=" << frame_timestamp
                       << ", sequence_id=" << (sequence_id + pkt_idx) << ")";
-
-        if (args_.verbose) {
-          std::cout << "Writing packet group " << col_group
-                    << ", packet " << pkt_idx
-                    << ", ticks " << tick_offset << "-"
-                    << (tick_offset + kTicksPerPacket - 1) << std::endl;
-        }
 
         pcap.writePacket(packet_data.data(), packet_data.size());
       }

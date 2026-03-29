@@ -34,6 +34,7 @@
 #include <sstream>
 #include <algorithm>
 #include <set>
+#include <cctype>
 
 #include "TRACE/trace.h"
 #include "detdataformats/DAQEthHeader.hpp"
@@ -70,52 +71,6 @@ constexpr unsigned int kTotalChannels = 1280;
 // Packets per column group (timetick window)
 constexpr uint16_t kPacketsPerGroup = kTotalChannels / kChannelsPerPacket;  // 1280 / 64 = 20
 
-/**
- * @brief Extract WIBEthFrame from a network packet
- * @param packet Raw packet data including Ethernet/IP/UDP headers
- * @param packet_size Size of packet data
- * @return Pointer to WIBEthFrame within the packet, or nullptr if invalid
- */
-const WIBEthFrame* extract_wib_frame(const uint8_t* packet, size_t packet_size) {
-  if (packet_size < kTotalHeaderSize + sizeof(WIBEthFrame)) {
-    return nullptr;
-  }
-  return reinterpret_cast<const WIBEthFrame*>(packet + kTotalHeaderSize);
-}
-
-/**
- * @brief Determine the packet index (0-19) from the WIBEthFrame
- * 
- * Uses crate/slot/stream to map back to offline channel offset
- */
-uint16_t get_packet_index(const WIBEthFrame& frame) {
-  if (global_map) {
-    // Use channel map to get the offline channel for this packet
-    uint16_t crate = frame.daq_header.crate_id;
-    uint16_t slot = frame.daq_header.slot_id;
-    uint16_t stream = frame.daq_header.stream_id;
-    uint16_t channel = frame.header.channel;
-    
-    // Reverse the encoding from images-to-pcap:
-    // out_stream = ((coords->fiber & 0x1U) << 6) | ((coords->channel / n_chan_per_stream) & 0x3U)
-    // out_chan = coords->channel % n_chan_per_stream
-    constexpr unsigned int n_chan_per_stream = 64;
-    unsigned int fiber = (stream >> 6) & 0x1U;
-    unsigned int chan_group = stream & 0x3U;
-    unsigned int map_channel = chan_group * n_chan_per_stream + channel;
-    
-    auto off_chan = global_map->get_offline_channel_from_crate_slot_fiber_chan(
-        crate, slot, fiber, map_channel);
-    
-    if (off_chan) {
-      return static_cast<uint16_t>(off_chan / kChannelsPerPacket);
-    }
-  }
-  
-  // Fallback: use stream_id as packet index
-  return frame.daq_header.stream_id % kPacketsPerGroup;
-}
-
 } // namespace
 
 namespace dune {
@@ -131,7 +86,6 @@ struct CommandLineArgs {
   std::string output_prefix;
   bool verbose = false;
   std::string plugin = "ICEBERGChannelMap";
-  uint32_t loops = 1;  // Number of times to loop over packet data
 };
 
 // Plane information structure
@@ -166,18 +120,15 @@ private:
   // 2) Pointers to ADC words data
   std::vector<const WIBEthFrame::word_t*> adc_ptrs_;
   
-  // Pre-computed offline channel mappings for each plane
-  // Maps plane key -> vector of offline channel IDs (one per wire)
-  std::map<std::string, std::vector<raw::ChannelID_t>> offline_channels_;
+  // Pixel data block indexed by [offline_channel][timetick]
+  // Same as pixelDataBlock in images-to-pcap.cxx
+  std::vector<std::vector<uint16_t>> pixelDataBlock;
   
   uint32_t getPlaneIndex(char plane_char) const;
-  raw::ChannelID_t offlineChannelForWire(char plane_char,
-                                         unsigned int tpc_num,
-                                         unsigned int wire_num) const;
   std::string buildOutputFilename(char plane_char, unsigned int tpc_num) const;
   bool saveImage(const std::string& filename, const PlaneInfo& plane);
-  void initializePlanePixelData();
-  void populatePlanePixelData(uint32_t pkt_idx, const WIBEthFrame* frame);
+  void populatePixelDataBlockFromPackets();
+  void mapPixelDataBlockToPlanes();
 
   geo::IcebergWireChannelMap channel_map_;
 };
@@ -187,13 +138,6 @@ uint32_t PcapToImages::getPlaneIndex(char plane_char) const {
   if (plane_char == 'V') return 1;
   if (plane_char == 'Z') return 2;
   throw std::runtime_error(std::string("Invalid plane character: ") + plane_char);
-}
-
-raw::ChannelID_t PcapToImages::offlineChannelForWire(char plane_char,
-                                                     unsigned int tpc_num,
-                                                     unsigned int wire_num) const {
-  geo::WireID wire_id(0, tpc_num, getPlaneIndex(plane_char), wire_num);
-  return channel_map_.PlaneWireToChannel(wire_id);
 }
 
 std::string PcapToImages::buildOutputFilename(char plane_char, 
@@ -215,58 +159,208 @@ bool PcapToImages::saveImage(const std::string& filename, const PlaneInfo& plane
   }
 }
 
-void PcapToImages::initializePlanePixelData() {
-  // Build offline channel mappings and allocate pixel data for each plane
-  for (auto& [key, plane] : planes_) {
-    // Build channel mapping
-    auto& channels = offline_channels_[key];
-    channels.reserve(plane.expected_rows);
-    for (unsigned int wire = 0; wire < plane.expected_rows; ++wire) {
-      channels.push_back(offlineChannelForWire(plane.plane_char, plane.tpc_num, wire));
-    }
-    
-    if (args_.verbose && !channels.empty()) {
-      std::cout << "Mapped " << key << " wires to offline channels "
-                << channels.front() << "..." << channels.back() << std::endl;
-    }
-    
-    // Allocate pixel data (row-major: height x width)
-    plane.width = common_columns_;
-    plane.pixels.resize(static_cast<size_t>(plane.expected_rows) * common_columns_, 0);
-  }
-}
+void PcapToImages::populatePixelDataBlockFromPackets() {
+  // Initialize pixelDataBlock[offline_channel][timetick] array
+  pixelDataBlock.assign(kTotalChannels, std::vector<uint16_t>(common_columns_, 0));
 
-void PcapToImages::populatePlanePixelData(uint32_t pkt_idx, const WIBEthFrame* frame) {
-  // Determine packet position
-  uint16_t col_group = static_cast<uint16_t>(pkt_idx / kPacketsPerGroup);
-  uint16_t packet_index = static_cast<uint16_t>(pkt_idx % kPacketsPerGroup);
-  uint16_t tick_offset = col_group * kTicksPerPacket;
-  uint16_t channel_offset = packet_index * kChannelsPerPacket;
-  
-  // For each plane, check if any of its channels fall within this packet's range
-  for (auto& [key, plane] : planes_) {
-    const auto& channels = offline_channels_.at(key);
-    
-    for (unsigned int wire = 0; wire < plane.expected_rows; ++wire) {
-      if (wire >= channels.size()) continue;
-      raw::ChannelID_t offline_ch = channels[wire];
-      
-      // Check if this offline channel is in the current packet's range
-      if (offline_ch >= channel_offset && 
-          offline_ch < (unsigned int)(channel_offset + kChannelsPerPacket)) {
-        uint16_t frame_channel = static_cast<uint16_t>(offline_ch - channel_offset);
-        
-        // Extract ADC values for all time samples in this packet
-        for (uint16_t sample = 0; sample < kTicksPerPacket; ++sample) {
-          uint16_t tick = tick_offset + sample;
-          if (tick < common_columns_) {
-            uint16_t adc = frame->get_adc(frame_channel, sample);
-            plane.pixels[static_cast<size_t>(wire) * common_columns_ + tick] = adc;
-          }
+  if (!global_map) {
+    std::cerr << "ERROR: Channel map is required for packet processing" << std::endl;
+    return;
+  }
+
+  constexpr unsigned int n_chan_per_stream = 64;
+
+  // Process each packet and populate pixelDataBlock
+  for (uint32_t pkt_idx = 0; pkt_idx < header_ptrs_.size(); ++pkt_idx) {
+    const auto* header = header_ptrs_[pkt_idx];
+    if (!header) continue;
+
+    const auto* frame = reinterpret_cast<const WIBEthFrame*>(header);
+
+    // Get hardware coordinates from the frame header
+    uint16_t crate = frame->daq_header.crate_id;
+    uint16_t slot = frame->daq_header.slot_id;
+    uint16_t stream = frame->daq_header.stream_id;
+
+    // Decode fiber and channel group from stream
+    // (reverse of: out_stream = ((fiber & 0x1U) << 6) | ((channel / 64) & 0x3U))
+    unsigned int fiber = (stream >> 6) & 0x1U;
+    unsigned int chan_group = stream & 0x3U;
+
+    // Determine tick offset from packet index
+    uint16_t col_group = static_cast<uint16_t>(pkt_idx / kPacketsPerGroup);
+    uint16_t tick_offset = col_group * kTicksPerPacket;
+
+    TLOG_DEBUG(2) << "Packet " << pkt_idx << ": crate=" << crate
+                  << " slot=" << slot << " stream=0x" << std::hex << stream << std::dec
+                  << " fiber=" << fiber << " chan_group=" << chan_group
+                  << " tick_offset=" << tick_offset;
+
+    // Process each of the 64 channels in this packet
+    for (uint16_t stream_chan = 0; stream_chan < kChannelsPerPacket; ++stream_chan) {
+      // Compute the hardware channel for the channel map lookup
+      unsigned int map_channel = chan_group * n_chan_per_stream + stream_chan;
+
+      // Look up offline channel from crate/slot/stream/channel
+      uint32_t off_chan = global_map->get_offline_channel_from_crate_slot_stream_chan(
+          crate, slot, stream, stream_chan);
+      TLOG_DEBUG(3) << "(crate=" << crate << " slot=" << slot << " stream=" << stream
+                    << " stream_chan=" << stream_chan << ")"
+                    << " -> offline_channel " << off_chan;
+
+      if (off_chan >= kTotalChannels) {
+        TLOG_ERROR() << "Offline channel " << off_chan << " out of range for crate=" << crate
+                      << " slot=" << slot << " fiber=" << fiber
+                      << " map_channel=" << map_channel << " (stream_chan=" << stream_chan << ")";
+        exit(EXIT_FAILURE);
+      }
+
+      // Extract ADC values for all time samples and store in pixelDataBlock
+      for (uint16_t sample = 0; sample < kTicksPerPacket; ++sample) {
+        uint16_t tick = tick_offset + sample;
+        if (tick < common_columns_) {
+          uint16_t adc = frame->get_adc(stream_chan, sample);
+          if (tick ==0) TLOG_DEBUG(4) << "setting pixelDataBlock[offchan=" << off_chan << "]"
+                          << "[tick=" << tick << "] = " << adc << " (from slot=" << slot
+                          << " stream=" << stream << " stream_chan=" << stream_chan
+                          << " sample=" << sample << ") [pkt_idx=" << pkt_idx << "]";
+          pixelDataBlock[off_chan][tick] = adc;
         }
       }
     }
   }
+
+  TLOG_DEBUG(1) << "pixelDataBlock populated: " << kTotalChannels
+                << " channels x " << common_columns_ << " timeticks";
+
+  // Debug logging: 32 timeticks per log line, one line per channel per window
+  for (uint32_t ch = 0; ch < kTotalChannels; ++ch) {
+      TLOG_DEBUG_SCOPED(10) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex << std::setfill('0');
+        for (uint16_t col = 0; col < 16; ++col)
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
+      }
+      TLOG_DEBUG_SCOPED(11) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 0<<":" << std::hex << std::setfill('0');
+        for (uint16_t col = 16; col < 32; ++col)
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
+      }
+      TLOG_DEBUG_SCOPED(12) {
+        TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 32<<":"<<std::hex << std::setfill('0');
+        for (uint16_t col = 32; col < 64; ++col)
+          TLOG_ADD << " " << pixelDataBlock[ch][col];
+      }
+      if (common_columns_ > 64) {
+        TLOG_DEBUG_SCOPED(13) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 64<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 64; col < 96; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+        TLOG_DEBUG_SCOPED(14) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 96<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 96; col < 128; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+      if (common_columns_ > 128) {
+        TLOG_DEBUG_SCOPED(15) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 128<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 128; col < 160; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+        TLOG_DEBUG_SCOPED(16) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 160<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 160; col < 192; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+      if (common_columns_ > 192) {
+        TLOG_DEBUG_SCOPED(17) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 192<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 192; col < 224; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+        TLOG_DEBUG_SCOPED(18) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 224<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 224; col < 256; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+      if (common_columns_ > 256) {
+        TLOG_DEBUG_SCOPED(19) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]:" << 256<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 256; col < 288; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+        TLOG_DEBUG_SCOPED(20) {
+          TLOG_ADD << "ch[" << std::setw(4) << ch << "]" << 288<<":" << std::hex << std::setfill('0');
+          for (uint16_t col = 288; col < 320; ++col)
+            TLOG_ADD << " " << pixelDataBlock[ch][col];
+        }
+      }
+  }
+}
+
+void PcapToImages::mapPixelDataBlockToPlanes() {
+  // Allocate pixel data for all planes
+  for (auto& [key, plane] : planes_) {
+    plane.width = common_columns_;
+    plane.pixels.assign(static_cast<size_t>(plane.expected_rows) * common_columns_, 0);
+  }
+
+  // Loop over all offline channels and map to wire(s)
+  for (uint32_t off_chan = 0; off_chan < kTotalChannels; ++off_chan) {
+    // Get the wire(s) for this offline channel (may be multiple for wrapped wires)
+    std::vector<geo::WireID> wire_ids = channel_map_.ChannelToWire(off_chan);
+
+    if (wire_ids.empty()) {
+      TLOG_DEBUG(3) << "No wire mapping for offline channel " << off_chan;
+      continue;
+    }
+
+    // Copy timetick data to each wire position
+    for (const auto& wire_id : wire_ids) {
+      // Determine which plane this wire belongs to
+      char plane_char;
+      switch (wire_id.Plane) {
+        case 0: plane_char = 'U'; break;
+        case 1: plane_char = 'V'; break;
+        case 2: plane_char = 'Z'; break;
+        default:
+          TLOG_DEBUG(1) << "Invalid plane " << wire_id.Plane << " for channel " << off_chan;
+          continue;
+      }
+
+      // Build plane key
+      std::string key = std::string(1, static_cast<char>(std::tolower(plane_char))) +
+                        std::to_string(wire_id.TPC);
+
+      auto it = planes_.find(key);
+      if (it == planes_.end()) {
+        TLOG_DEBUG(1) << "Plane " << key << " not found for channel " << off_chan;
+        continue;
+      }
+
+      PlaneInfo& plane = it->second;
+      unsigned int wire_num = wire_id.Wire;
+
+      if (wire_num >= plane.expected_rows) {
+        TLOG_DEBUG(1) << "Wire " << wire_num << " exceeds plane " << key
+                      << " height " << plane.expected_rows;
+        continue;
+      }
+
+      // Copy all timeticks for this channel to the wire row
+      for (uint16_t tick = 0; tick < common_columns_; ++tick) {
+        plane.pixels[static_cast<size_t>(wire_num) * common_columns_ + tick] = pixelDataBlock[off_chan][tick];
+      }
+
+      TLOG_DEBUG(4) << "Mapped offline channel " << off_chan 
+                    << " to " << key << " wire " << wire_num;
+    }
+  }
+
+  TLOG_DEBUG(1) << "All 6 plane pixel data blocks populated";
 }
 
 bool PcapToImages::parseArguments(int argc, char* argv[]) {
@@ -291,7 +385,6 @@ bool PcapToImages::parseArguments(int argc, char* argv[]) {
                 << "  --output-dir DIR   Directory for output images (default: '.')" << std::endl
                 << "  --output-prefix STR Prefix prepended to output filenames" << std::endl
                 << "  --plugin NAME      Channel map plugin (default: 'ICEBERGChannelMap')" << std::endl
-                << "  --loops N          Number of times to loop over packet data (default: 1)" << std::endl
                 << "  --verbose          Enable verbose output" << std::endl
                 << "  -h, --help         Show this help message" << std::endl
                 << std::endl
@@ -311,13 +404,6 @@ bool PcapToImages::parseArguments(int argc, char* argv[]) {
     }
     else if (arg == "--plugin" && i + 1 < argc) {
       args_.plugin = argv[++i];
-    }
-    else if (arg == "--loops" && i + 1 < argc) {
-      args_.loops = static_cast<uint32_t>(std::atoi(argv[++i]));
-      if (args_.loops == 0) {
-        std::cerr << "ERROR: --loops must be at least 1" << std::endl;
-        return false;
-      }
     }
     else if (arg == "--verbose") {
       args_.verbose = true;
@@ -431,49 +517,25 @@ bool PcapToImages::readPcap() {
 }
 
 bool PcapToImages::processPackets() {
-  TLOG() << "Processing packets with " << args_.loops << " loop(s)...";
-  
-  // Initialize plane pixel data and channel mappings
-  initializePlanePixelData();
-  
-  for (uint32_t loop = 0; loop < args_.loops; ++loop) {
+  TLOG() << "Processing packets...";
 
-    if (args_.verbose || args_.loops > 1) {
-      std::cout << "Loop " << (loop + 1) << " of " << args_.loops << std::endl;
-    }
-    
-    // Process each packet using the pointer vectors
-    for (uint32_t pkt_idx = 0; pkt_idx < header_ptrs_.size(); ++pkt_idx) {
-      const auto* header = header_ptrs_[pkt_idx];
-      const auto* adc_data = adc_ptrs_[pkt_idx];
-      
-      if (!header || !adc_data) {
-        continue;
-      }
-      
-      // Reconstruct the WIBEthFrame pointer from header pointer
-      // (header is at the start of WIBEthFrame)
-      const auto* frame = reinterpret_cast<const WIBEthFrame*>(header);
-      
-      if (args_.verbose) {
-        uint16_t col_group = static_cast<uint16_t>(pkt_idx / kPacketsPerGroup);
-        uint16_t packet_index = static_cast<uint16_t>(pkt_idx % kPacketsPerGroup);
-        uint16_t tick_offset = col_group * kTicksPerPacket;
-        uint16_t channel_offset = packet_index * kChannelsPerPacket;
-        
-        std::cout << "Processing packet " << pkt_idx 
-                  << ": col_group=" << col_group
-                  << ", packet_index=" << packet_index
-                  << ", channels " << channel_offset << "-" 
-                  << (channel_offset + kChannelsPerPacket - 1)
-                  << ", ticks " << tick_offset << "-"
-                  << (tick_offset + kTicksPerPacket - 1) << std::endl;
-      }
-      
-      // Extract ADC values and populate all 6 plane pixel data blocks
-      populatePlanePixelData(pkt_idx, frame);
-    }
+  if (!global_map) {
+    std::cerr << "ERROR: Channel map is required for processing" << std::endl;
+    return false;
   }
+
+  // Step 1: Build pixelDataBlock[offline_channel][timetick] from all packets
+  std::cout << "Building pixel data block from packets..." << std::endl;
+  populatePixelDataBlockFromPackets();
+
+  if (args_.verbose) {
+    std::cout << "Populated pixelDataBlock[" << kTotalChannels << "][" 
+              << common_columns_ << "]" << std::endl;
+  }
+
+  // Step 2: Loop over offline channels and map to wire positions in planes
+  std::cout << "Mapping offline channels to wire positions..." << std::endl;
+  mapPixelDataBlockToPlanes();
   
   TLOG_DEBUG(1) << "All 6 plane pixel data blocks populated with "
                 << common_columns_ << " columns";

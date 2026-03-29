@@ -29,6 +29,12 @@ int main(int argc, char* argv[]) {
   int delta_width = 5;
   const char* pcap_file = nullptr;
 
+  // --data option: pkt (1-based), pktchn (0-63), tickcnt
+  bool print_data = false;
+  int data_pkt = 0;
+  int data_pktchn = 0;
+  int data_tickcnt = 0;
+
   for (int argi = 1; argi < argc; ++argi) {
     const std::string arg = argv[argi];
 
@@ -60,19 +66,49 @@ int main(int argc, char* argv[]) {
         std::cerr << "ERROR: --delta width must be >= 0" << std::endl;
         return 1;
       }
+    } else if (arg.rfind("--data=", 0) == 0) {
+      std::string data_arg = arg.substr(std::string("--data=").size());
+      // Parse comma-separated values: pkt,pktchn,tickcnt
+      size_t pos1 = data_arg.find(',');
+      size_t pos2 = (pos1 != std::string::npos) ? data_arg.find(',', pos1 + 1) : std::string::npos;
+      if (pos1 == std::string::npos || pos2 == std::string::npos) {
+        std::cerr << "ERROR: --data requires 3 comma-separated values: --data=<pkt,pktchn,tickcnt>" << std::endl;
+        return 1;
+      }
+      try {
+        data_pkt = std::stoi(data_arg.substr(0, pos1));
+        data_pktchn = std::stoi(data_arg.substr(pos1 + 1, pos2 - pos1 - 1));
+        data_tickcnt = std::stoi(data_arg.substr(pos2 + 1));
+      } catch (const std::exception& e) {
+        std::cerr << "ERROR: --data requires 3 numeric values: --data=<pkt,pktchn,tickcnt>" << std::endl;
+        return 1;
+      }
+      if (data_pkt < 1) {
+        std::cerr << "ERROR: --data pkt must be >= 1 (1-based packet number)" << std::endl;
+        return 1;
+      }
+      if (data_pktchn < 0 || data_pktchn > 63) {
+        std::cerr << "ERROR: --data pktchn must be 0-63" << std::endl;
+        return 1;
+      }
+      if (data_tickcnt < 1) {
+        std::cerr << "ERROR: --data tickcnt must be >= 1" << std::endl;
+        return 1;
+      }
+      print_data = true;
     } else if (!arg.empty() && arg.front() == '-') {
-      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] <input.pcap>" << std::endl;
+      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
       return 1;
     } else if (pcap_file == nullptr) {
       pcap_file = argv[argi];
     } else {
-      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] <input.pcap>" << std::endl;
+      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
       return 1;
     }
   }
 
   if (pcap_file == nullptr) {
-    std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] <input.pcap>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
     return 1;
   }
 
@@ -189,6 +225,21 @@ int main(int argc, char* argv[]) {
 
     output << ' ' << std::setw(7) << std::setfill(' ') << udp_payload_size;
     std::cout << output.str() << std::endl;
+
+    // Print ADC data if --data option matches this packet
+    if (print_data && packet_count == data_pkt) {
+      if (udp_payload_size >= sizeof(dunedaq::fddetdataformats::WIBEthFrame)) {
+        const auto* wib_frame = reinterpret_cast<const dunedaq::fddetdataformats::WIBEthFrame*>(data + udp_payload_offset);
+        std::cout << "    ADC[ch" << data_pktchn << "]:";
+        int max_ticks = std::min(data_tickcnt, static_cast<int>(dunedaq::fddetdataformats::WIBEthFrame::s_time_samples_per_frame));
+        for (int tick = 0; tick < max_ticks; ++tick) {
+          std::cout << ' ' << std::hex << std::setw(4) << std::setfill('0') << wib_frame->get_adc(data_pktchn, tick);
+        }
+        std::cout << std::dec << std::endl;
+      } else {
+        std::cout << "    (packet too small for WIBEthFrame ADC data)" << std::endl;
+      }
+    }
 
     previous_timestamp = timestamp;
     have_previous_timestamp = true;
