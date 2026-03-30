@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <memory>
+#include <functional>
 
 /**
  * @brief Utility class for loading 16-bit grayscale PNG images
@@ -27,15 +28,27 @@ public:
   static ImageData loadImage(const std::string& filename);
 
   /**
-   * @brief Generate a test PNG image with specified dimensions
+   * @brief Generate a test PNG image with specified dimensions (simple version)
    * @param filename Path where to save the PNG file
    * @param width Image width (must be multiple of 64, max 512)
    * @param height Image height
-    * Pixel values are generated as `(row << 8) | (col & 0xff)`.
+   * Pixel values are generated as `((col & 0x3f) << 8) | (row & 0xff)`.
    */
   static void generateTestImage(const std::string& filename, 
                                 uint16_t width, 
-                        uint16_t height);
+                                uint16_t height);
+
+  /**
+   * @brief Generate a test PNG image with a custom pixel value function
+   * @param filename Path where to save the PNG file
+   * @param width Image width
+   * @param height Image height
+   * @param pixel_func Function that takes (row, col) and returns 16-bit pixel value
+   */
+  static void generateTestImage(const std::string& filename, 
+                                uint16_t width, 
+                                uint16_t height,
+                                std::function<uint16_t(uint16_t row, uint16_t col)> pixel_func);
 
   /**
    * @brief Save a 16-bit grayscale PNG image

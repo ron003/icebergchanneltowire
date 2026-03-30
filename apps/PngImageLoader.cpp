@@ -2,6 +2,7 @@
 #include <png.h>
 #include <fstream>
 #include <cstring>
+#include <functional>
 #include "TRACE/trace.h"
 
 struct PngReadState {
@@ -76,8 +77,10 @@ PngImageLoader::ImageData PngImageLoader::loadImage(const std::string& filename)
       );
     }
 
-    // Set up transformations for big-endian 16-bit data
-    png_set_swap(png);  // Convert big-endian to native byte order
+    // PNG stores 16-bit values in big-endian (network byte order).
+    // On little-endian systems, we need to swap bytes to get correct native values.
+    // This must be called after png_read_info() and before png_read_image().
+    png_set_swap(png);
 
     // Update the info structure
     png_read_update_info(png, info);
@@ -164,10 +167,10 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     png_set_compression_level(png, 0);
     png_set_filter(png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE);
 
-    // Set byte order for 16-bit values BEFORE png_write_info
-    png_set_swap(png);
-
     png_write_info(png, info);
+
+    // Set byte order for 16-bit values AFTER png_write_info, BEFORE png_write_image
+    png_set_swap(png);
 
     // Encode the column (timetick) in the high byte and the row (wire) in the low byte.
     std::vector<uint16_t> image_data(static_cast<size_t>(width) * height);
@@ -179,13 +182,97 @@ void PngImageLoader::generateTestImage(const std::string& filename,
 
     // First fill all image data
     for (uint32_t y = 0; y < height; ++y) {
-      for (uint32_t x = 0; x < width; ++x) { // col = x, row = y
+      for (uint32_t x = 0; x < width; ++x) { // x = col, y = row
         image_data[(static_cast<size_t>(y) * width) + x] =
           static_cast<uint16_t>(((x & 0x3f) << 8) | (y & 0xff));
       }
     }
 
     // Then set up row pointers
+    for (uint32_t y = 0; y < height; ++y) {
+      row_pointers[y] = reinterpret_cast<png_bytep>(
+        image_data.data() + (static_cast<size_t>(y) * width)
+      );
+    }
+
+    png_write_image(png, row_pointers.data());
+
+    png_write_end(png, nullptr);
+
+  } catch (...) {
+    png_destroy_write_struct(&png, &info);
+    throw;
+  }
+
+  png_destroy_write_struct(&png, &info);
+}
+
+void PngImageLoader::generateTestImage(const std::string& filename,
+                                       uint16_t width,
+                                       uint16_t height,
+                                       std::function<uint16_t(uint16_t row, uint16_t col)> pixel_func) {
+  // Create PNG structures
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  if (!png) {
+    throw std::runtime_error("Failed to create PNG write structure");
+  }
+
+  png_infop info = png_create_info_struct(png);
+  if (!info) {
+    png_destroy_write_struct(&png, nullptr);
+    throw std::runtime_error("Failed to create PNG info structure");
+  }
+
+  // Open output file
+  std::ofstream file(filename, std::ios::binary);
+  if (!file.is_open()) {
+    png_destroy_write_struct(&png, &info);
+    throw std::runtime_error("Cannot create PNG file: " + filename);
+  }
+
+  try {
+    // Set up error handling
+    if (setjmp(png_jmpbuf(png))) {
+      throw std::runtime_error("PNG writing error: " + filename);
+    }
+
+    // Set write callback
+    png_set_write_fn(png, &file, png_write_callback, nullptr);
+
+    // Set PNG info
+    png_set_IHDR(
+      png, info,
+      width, height,
+      16,                    // bit_depth
+      PNG_COLOR_TYPE_GRAY,   // color_type
+      PNG_INTERLACE_NONE,
+      PNG_COMPRESSION_TYPE_DEFAULT,
+      PNG_FILTER_TYPE_DEFAULT
+    );
+
+    // Keep generated test images close to raw size for easier inspection.
+    png_set_compression_level(png, 0);
+    png_set_filter(png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE);
+
+    png_write_info(png, info);
+
+    // Set byte order for 16-bit values AFTER png_write_info, BEFORE png_write_image
+    png_set_swap(png);
+
+    std::vector<uint16_t> image_data(static_cast<size_t>(width) * height);
+    std::vector<png_bytep> row_pointers(height);
+
+    TLOG_DEBUG(1) << "Generating test image with custom pixel function: " << filename
+                 << " (" << width << "x" << height << ")";
+
+    // Fill image data using the provided pixel function
+    for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        image_data[(static_cast<size_t>(y) * width) + x] = pixel_func(static_cast<uint16_t>(y), static_cast<uint16_t>(x));
+      }
+    }
+
+    // Set up row pointers
     for (uint32_t y = 0; y < height; ++y) {
       row_pointers[y] = reinterpret_cast<png_bytep>(
         image_data.data() + (static_cast<size_t>(y) * width)

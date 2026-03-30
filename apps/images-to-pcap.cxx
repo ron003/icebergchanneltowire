@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <iostream>
+#include <limits>
 #include <fstream>
 #include <filesystem>
 #include <cstring>
@@ -37,6 +38,11 @@
 #include "PcapWriter.hpp"
 // detchannelmaps factory
 #include "detchannelmaps/TPCChannelMap.hpp"
+
+// raw::ChannelID_t type definition
+namespace raw {
+  using ChannelID_t = unsigned int;
+}
 
 namespace {
 
@@ -256,13 +262,18 @@ private:
   bool validateImage(const PlaneInfo& plane);
   bool loadOrGenerateImage(PlaneInfo& plane,
                           const std::string& plane_name);
-  raw::ChannelID_t offlineChannelForWire(char plane_char,
-                                         unsigned int tpc_num,
-                                         unsigned int wire_num) const;
   std::string buildImageFilename(char plane_char, unsigned int tpc_num,
                                  uint16_t cols) const;
 
-  geo::IcebergWireChannelMap channel_map_;
+  // Wire-to-offline-channel mapping built from ICEBERGChannelMap
+  // Key: plane*10 + tpc, Value: vector of offline channels (index = wire number)
+  std::map<int, std::vector<unsigned int>> wire_to_offline_;
+  unsigned int total_offline_channels_ = 0;
+
+  bool buildWireMapping();
+  std::optional<raw::ChannelID_t> offlineChannelForWire(char plane_char,
+                                                        unsigned int tpc_num,
+                                                        unsigned int wire_num) const;
 };
 
 uint32_t ImagesTopcap::getPlaneIndex(char plane_char) const {
@@ -342,8 +353,25 @@ bool ImagesTopcap::loadOrGenerateImage(PlaneInfo& plane,
                                                common_columns_);
       try {
         std::cout << "Generating test image: " << filename << std::endl;
+        
+        // Use IcebergWireChannelMap to create a channel-based pixel function.
+        // This ensures wrapped wires (which share offline channels) get the same
+        // pixel value in both TPC images, making round-trip tests deterministic.
+        geo::IcebergWireChannelMap geom_map;
+        unsigned int plane_idx = getPlaneIndex(plane.plane_char);
+        unsigned int tpc_num = plane.tpc_num;
+        
+        auto pixel_func = [&geom_map, plane_idx, tpc_num](uint16_t row, uint16_t col) -> uint16_t {
+          // row = wire number, col = timetick
+          // Use offline channel number in the low byte instead of wire number
+          // This makes wrapped wires (which share channels) have identical values
+          geo::WireID wire_id(0, tpc_num, plane_idx, row); // cryostat=0
+          raw::ChannelID_t ch = geom_map.PlaneWireToChannel(wire_id);
+          return static_cast<uint16_t>(((col & 0x3f) << 8) | (ch & 0xff));
+        };
+        
         PngImageLoader::generateTestImage(filename, common_columns_, 
-                                         plane.expected_rows);
+                                         plane.expected_rows, pixel_func);
         plane.data = PngImageLoader::loadImage(filename);
         if (validateImage(plane)) {
           return true;
@@ -361,11 +389,109 @@ bool ImagesTopcap::loadOrGenerateImage(PlaneInfo& plane,
   }
 }
 
-raw::ChannelID_t ImagesTopcap::offlineChannelForWire(char plane_char,
-                                                     unsigned int tpc_num,
-                                                     unsigned int wire_num) const {
-  geo::WireID wire_id(0, tpc_num, getPlaneIndex(plane_char), wire_num);
-  return channel_map_.PlaneWireToChannel(wire_id);
+// Build a mapping from (plane, tpc, wire) -> offline_channel using IcebergWireChannelMap.
+// This ensures we use the same geometry wire numbering as pcap-to-images.
+bool ImagesTopcap::buildWireMapping() {
+  if (!global_map) {
+    std::cerr << "ERROR: Channel map not initialized" << std::endl;
+    return false;
+  }
+
+  // Use IcebergWireChannelMap for consistent wire numbering with pcap-to-images
+  geo::IcebergWireChannelMap geom_map;
+
+  // Pre-size wire_to_offline_ vectors based on expected wire counts
+  // U planes: 316 wires, V planes: 315 wires, Z planes: 240 wires
+  constexpr std::array<unsigned int, 3> kWiresPerPlane = {316, 315, 240};
+  for (unsigned int plane = 0; plane < 3; ++plane) {
+    for (unsigned int tpc = 0; tpc < 2; ++tpc) {
+      int key = static_cast<int>(plane) * 10 + static_cast<int>(tpc);
+      // Initialize with invalid channel marker (max value)
+      wire_to_offline_[key].assign(kWiresPerPlane[plane], std::numeric_limits<unsigned int>::max());
+    }
+  }
+
+  // Iterate over all offline channels and use ChannelToWire to get geometry wire
+  constexpr unsigned int max_offline = 1280;
+  unsigned int mapped_channel_count = 0;  // Count of unique offline channels processed
+  for (unsigned int off_ch = 0; off_ch < max_offline; ++off_ch) {
+    // Use IcebergWireChannelMap to get the geometry wire
+    std::vector<geo::WireID> wire_ids = geom_map.ChannelToWire(off_ch);
+    if (wire_ids.empty()) {
+      continue;
+    }
+
+    // Also verify the channel map returns consistent data
+    auto coords = global_map->get_crate_slot_fiber_chan_from_offline_channel(off_ch);
+    if (!coords.has_value()) {
+      continue;
+    }
+
+    // This offline channel is valid - count it once
+    ++mapped_channel_count;
+
+    // Process ALL wire IDs - for wrapped wires, a single offline channel
+    // maps to multiple geometry wires (e.g., TPC 0 wire 200 AND TPC 1 wire 0)
+    for (const auto& wire_id : wire_ids) {
+      unsigned int plane = wire_id.Plane;
+      unsigned int tpc = wire_id.TPC;
+      unsigned int wire = wire_id.Wire;
+
+      if (plane > 2 || tpc > 1) {
+        TLOG_DEBUG(2) << "Skipping offline channel " << off_ch
+                      << " with invalid plane=" << plane << " or tpc=" << tpc;
+        continue;
+      }
+
+      int key = static_cast<int>(plane) * 10 + static_cast<int>(tpc);
+      if (wire < wire_to_offline_[key].size()) {
+        wire_to_offline_[key][wire] = off_ch;
+        TLOG_DEBUG(4) << "Mapped offline channel " << off_ch 
+                      << " to plane=" << plane << " tpc=" << tpc << " wire=" << wire;
+      }
+    }
+  }
+
+  total_offline_channels_ = mapped_channel_count;
+  TLOG_DEBUG(1) << "Mapped " << total_offline_channels_ << " offline channels to geometry wires";
+
+  // Log summary for each plane
+  for (unsigned int plane = 0; plane < 3; ++plane) {
+    for (unsigned int tpc = 0; tpc < 2; ++tpc) {
+      int key = static_cast<int>(plane) * 10 + static_cast<int>(tpc);
+      const auto& wire_vec = wire_to_offline_[key];
+      unsigned int valid_count = 0;
+      for (auto ch : wire_vec) {
+        if (ch != std::numeric_limits<unsigned int>::max()) {
+          ++valid_count;
+        }
+      }
+      char plane_char = (plane == 0) ? 'U' : (plane == 1) ? 'V' : 'Z';
+      TLOG_DEBUG(1) << "Plane " << plane_char << tpc << " has " << valid_count
+                    << " of " << wire_vec.size() << " wires mapped";
+    }
+  }
+
+  return true;
+}
+
+std::optional<raw::ChannelID_t> ImagesTopcap::offlineChannelForWire(char plane_char,
+                                                                    unsigned int tpc_num,
+                                                                    unsigned int wire_num) const {
+  unsigned int plane = getPlaneIndex(plane_char);
+  int key = static_cast<int>(plane) * 10 + static_cast<int>(tpc_num);
+
+  auto it = wire_to_offline_.find(key);
+  if (it == wire_to_offline_.end()) {
+    return std::nullopt;
+  }
+
+  const auto& wire_vec = it->second;
+  if (wire_num >= wire_vec.size()) {
+    return std::nullopt;
+  }
+
+  return wire_vec[wire_num];
 }
 
 bool ImagesTopcap::parseArguments(int argc, char* argv[]) {
@@ -543,43 +669,58 @@ bool ImagesTopcap::generatePcap() {
                 << "': " << e.what() << std::endl;
       global_map.reset();
     }
+
+    if (!global_map) {
+      throw std::runtime_error("Channel map is required for offline-channel-based packet generation");
+    }
+
+    // Build the wire-to-offline-channel mapping from the channel map plugin
+    if (!buildWireMapping()) {
+      throw std::runtime_error("Failed to build wire-to-channel mapping");
+    }
+
     PcapWriter pcap(args_.output_file);
-    std::map<std::string, std::vector<raw::ChannelID_t>> offline_channels;
 
-    for (auto const& [key, plane] : planes_) {
-      auto& channels = offline_channels[key];
-      channels.reserve(plane.data.height);
-      for (unsigned int wire = 0; wire < plane.data.height; ++wire) {
-        channels.push_back(offlineChannelForWire(plane.plane_char, plane.tpc_num, wire));
-      }
-
-      if (args_.verbose && !channels.empty()) {
-        std::cout << "Mapped " << key << " wires to offline channels "
-                  << channels.front() << "..." << channels.back() << std::endl;
+    // Print verbose info about wire mappings
+    if (args_.verbose) {
+      for (auto const& [key, plane] : planes_) {
+        unsigned int plane_idx = getPlaneIndex(plane.plane_char);
+        int map_key = static_cast<int>(plane_idx) * 10 + static_cast<int>(plane.tpc_num);
+        auto it = wire_to_offline_.find(map_key);
+        if (it != wire_to_offline_.end() && !it->second.empty()) {
+          std::cout << "Plane " << key << ": " << it->second.size() << " wires mapped to offline channels "
+                    << it->second.front() << "..." << it->second.back() << std::endl;
+        }
       }
     }
 
     // ---- Build the full pixel data block indexed by [offline_channel][timetick] ----
     // pixelDataBlock[ch][col] = 16-bit ADC value for offline channel ch at timetick col.
     // Dimensions: [0..Nchannels-1][0..common_columns_-1]  (e.g. [1280][64])
-    const unsigned int total_channels = channel_map_.Nchannels();
+    const unsigned int total_channels = total_offline_channels_;
     std::vector<std::vector<uint16_t>> pixelDataBlock(
         total_channels, std::vector<uint16_t>(common_columns_, 0));
 
     for (auto const& [key, plane] : planes_) {
-      auto const& channels = offline_channels.at(key);
       uint16_t const ncols = std::min(plane.data.width, common_columns_);
-      for (unsigned int wire = 0; wire < plane.data.height; ++wire) {
-        if (wire >= channels.size()) {
-          TLOG_ERROR() << "Wire index " << wire << " exceeds channel mapping for plane "
-                      << plane.plane_char << plane.tpc_num;
-          return false;
-        }
-        raw::ChannelID_t const ch = channels[wire];
-        if (ch >= total_channels) {
-          TLOG_ERROR() << "Channel index " << ch << " exceeds total channels for plane "
-                      << plane.plane_char << plane.tpc_num;
-          return false;
+      unsigned int plane_idx = getPlaneIndex(plane.plane_char);
+      int map_key = static_cast<int>(plane_idx) * 10 + static_cast<int>(plane.tpc_num);
+
+      auto it = wire_to_offline_.find(map_key);
+      if (it == wire_to_offline_.end()) {
+        TLOG_DEBUG(1) << "No wire mapping for plane " << key << " - skipping";
+        continue;
+      }
+
+      const auto& wire_vec = it->second;
+      unsigned int wires_mapped = static_cast<unsigned int>(wire_vec.size());
+      unsigned int wires_to_use = std::min(wires_mapped, static_cast<unsigned int>(plane.data.height));
+
+      for (unsigned int wire = 0; wire < wires_to_use; ++wire) {
+        raw::ChannelID_t const ch = wire_vec[wire];
+        // Skip wires that don't have a mapped offline channel
+        if (ch == std::numeric_limits<unsigned int>::max()) {
+          continue;
         }
         TLOG_DEBUG(2) << "Mapping plane " << key << " wire " << std::setw(3) << wire
                       << " data[col=0] " << std::setw(4) << std::hex << plane.data.pixels[wire * plane.data.width]
@@ -587,6 +728,11 @@ bool ImagesTopcap::generatePcap() {
         for (uint16_t col = 0; col < ncols; ++col) {
           pixelDataBlock[ch][col] = plane.data.pixels[wire * plane.data.width + col];
         }
+      }
+
+      if (wires_mapped != plane.data.height) {
+        TLOG_DEBUG(1) << "Plane " << key << ": mapped " << wires_to_use << " of " << plane.data.height
+                      << " image rows (channel map has " << wires_mapped << " wires)";
       }
     }
 
