@@ -164,10 +164,10 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     png_set_compression_level(png, 0);
     png_set_filter(png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE);
 
-    png_write_info(png, info);
-
-    // Set byte order for 16-bit values
+    // Set byte order for 16-bit values BEFORE png_write_info
     png_set_swap(png);
+
+    png_write_info(png, info);
 
     // Encode the column (timetick) in the high byte and the row (wire) in the low byte.
     std::vector<uint16_t> image_data(static_cast<size_t>(width) * height);
@@ -176,11 +176,17 @@ void PngImageLoader::generateTestImage(const std::string& filename,
     TLOG_DEBUG(1) << "Generating test image: " << filename
                  << " (" << width << "x" << height
                  << ") with value formula ((col & 0x3f) << 8) | (row & 0xff)";
+
+    // First fill all image data
     for (uint32_t y = 0; y < height; ++y) {
-      for (uint32_t x = 0; x < width; ++x) {
+      for (uint32_t x = 0; x < width; ++x) { // col = x, row = y
         image_data[(static_cast<size_t>(y) * width) + x] =
           static_cast<uint16_t>(((x & 0x3f) << 8) | (y & 0xff));
       }
+    }
+
+    // Then set up row pointers
+    for (uint32_t y = 0; y < height; ++y) {
       row_pointers[y] = reinterpret_cast<png_bytep>(
         image_data.data() + (static_cast<size_t>(y) * width)
       );

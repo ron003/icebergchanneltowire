@@ -23,11 +23,103 @@ struct pcap_pkthdr {
   uint32_t len;
 };
 
+struct pcap_file_header {
+  uint32_t magic_number;
+  uint16_t version_major;
+  uint16_t version_minor;
+  int32_t  thiszone;
+  uint32_t sigfigs;
+  uint32_t snaplen;
+  uint32_t network;
+};
+
+// Generate a test PCAP file with one packet containing a WIBEthFrame
+// with incrementing ADC values: adc[channel][tick] = ((channel & 0x3f) << 8) | (tick & 0x3f)
+static int generate_test_pcap(const char* filename) {
+  using dunedaq::fddetdataformats::WIBEthFrame;
+
+  // Build the complete packet: Ethernet + IP + UDP + WIBEthFrame
+  constexpr size_t eth_hdr_size = sizeof(struct ether_header);
+  constexpr size_t ip_hdr_size = sizeof(struct ip);
+  constexpr size_t udp_hdr_size = sizeof(struct udphdr);
+  constexpr size_t wib_frame_size = sizeof(WIBEthFrame);
+  constexpr size_t total_packet_size = eth_hdr_size + ip_hdr_size + udp_hdr_size + wib_frame_size;
+
+  std::vector<uint8_t> packet(total_packet_size, 0);
+
+  // Ethernet header
+  auto* eth = reinterpret_cast<struct ether_header*>(packet.data());
+  eth->ether_type = htons(ETHERTYPE_IP);
+
+  // IP header
+  auto* ip_hdr = reinterpret_cast<struct ip*>(packet.data() + eth_hdr_size);
+  ip_hdr->ip_hl = 5;
+  ip_hdr->ip_v = 4;
+  ip_hdr->ip_len = htons(static_cast<uint16_t>(ip_hdr_size + udp_hdr_size + wib_frame_size));
+  ip_hdr->ip_p = IPPROTO_UDP;
+
+  // UDP header
+  auto* udp_hdr = reinterpret_cast<struct udphdr*>(packet.data() + eth_hdr_size + ip_hdr_size);
+  udp_hdr->uh_ulen = htons(static_cast<uint16_t>(udp_hdr_size + wib_frame_size));
+
+  // WIBEthFrame - fill with incrementing pattern
+  auto* wib_frame = reinterpret_cast<WIBEthFrame*>(packet.data() + eth_hdr_size + ip_hdr_size + udp_hdr_size);
+
+  // Initialize the DAQ header
+  wib_frame->daq_header.crate_id = 8;
+  wib_frame->daq_header.slot_id = 2;
+  wib_frame->daq_header.stream_id = 0;
+
+  // Fill ADC values: adc[channel][tick] = ((channel & 0x3f) << 8) | (tick & 0x3f)
+  for (int ch = 0; ch < static_cast<int>(WIBEthFrame::s_num_channels); ++ch) {
+    for (int tick = 0; tick < static_cast<int>(WIBEthFrame::s_time_samples_per_frame); ++tick) {
+      uint16_t adc_value = static_cast<uint16_t>(((ch & 0x3f) << 8) | (tick & 0x3f));
+      wib_frame->set_adc(ch, tick, adc_value);
+    }
+  }
+
+  // Write PCAP file
+  std::ofstream outfile(filename, std::ios::binary);
+  if (!outfile) {
+    std::cerr << "ERROR: Could not create file " << filename << std::endl;
+    return 1;
+  }
+
+  // Global header
+  struct pcap_file_header global_hdr = {};
+  global_hdr.magic_number = 0xa1b2c3d4;
+  global_hdr.version_major = 2;
+  global_hdr.version_minor = 4;
+  global_hdr.snaplen = 65535;
+  global_hdr.network = 1; // Ethernet
+  outfile.write(reinterpret_cast<const char*>(&global_hdr), sizeof(global_hdr));
+
+  // Packet header
+  struct pcap_pkthdr pkt_hdr = {};
+  pkt_hdr.caplen = static_cast<uint32_t>(total_packet_size);
+  pkt_hdr.len = static_cast<uint32_t>(total_packet_size);
+  outfile.write(reinterpret_cast<const char*>(&pkt_hdr), sizeof(pkt_hdr));
+
+  // Packet data
+  outfile.write(reinterpret_cast<const char*>(packet.data()), static_cast<std::streamsize>(total_packet_size));
+
+  std::cout << "Generated test PCAP: " << filename << std::endl;
+  std::cout << "  1 packet, " << total_packet_size << " bytes" << std::endl;
+  std::cout << "  WIBEthFrame: " << WIBEthFrame::s_num_channels << " channels x "
+            << WIBEthFrame::s_time_samples_per_frame << " ticks" << std::endl;
+  std::cout << "  ADC pattern: adc[ch][tick] = ((ch & 0x3f) << 8) | (tick & 0x3f)" << std::endl;
+  std::cout << "  Example: ch0 tick0-3 = 0000 0001 0002 0003" << std::endl;
+  std::cout << "           ch1 tick0-3 = 0100 0101 0102 0103" << std::endl;
+
+  return 0;
+}
+
 int main(int argc, char* argv[]) {
   int packet_limit = -1;
   bool print_delta = false;
   int delta_width = 5;
   const char* pcap_file = nullptr;
+  const char* generate_file = nullptr;
 
   // --data option: pkt (1-based), pktchn (0-63), tickcnt
   bool print_data = false;
@@ -96,19 +188,26 @@ int main(int argc, char* argv[]) {
         return 1;
       }
       print_data = true;
+    } else if (arg.rfind("--generate=", 0) == 0) {
+      generate_file = argv[argi] + std::string("--generate=").size();
     } else if (!arg.empty() && arg.front() == '-') {
-      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
+      std::cerr << "Usage: " << argv[0] << " [--generate=<output.pcap>] | [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
       return 1;
     } else if (pcap_file == nullptr) {
       pcap_file = argv[argi];
     } else {
-      std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
+      std::cerr << "Usage: " << argv[0] << " [--generate=<output.pcap>] | [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
       return 1;
     }
   }
 
+  // Handle --generate mode
+  if (generate_file != nullptr) {
+    return generate_test_pcap(generate_file);
+  }
+
   if (pcap_file == nullptr) {
-    std::cerr << "Usage: " << argv[0] << " [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " [--generate=<output.pcap>] | [-n <packet_count>] [--delta[=<column_width>]] [--data=<pkt,pktchn,tickcnt>] <input.pcap>" << std::endl;
     return 1;
   }
 
