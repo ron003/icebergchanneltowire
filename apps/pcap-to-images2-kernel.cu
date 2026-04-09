@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include "TRACE/trace.h"
 
 // Constants (must match pcap-to-images2.cxx)
 static constexpr int kChannelsPerPacket  = 64;
@@ -162,23 +163,22 @@ extern "C" void scatter_adc_to_images_gpu(
   int sub_groups_per_image = packets_per_image_group / kPacketsPerGroup;
   int total_z = num_image_groups * sub_groups_per_image * kPacketsPerGroup;
 
-  dim3 threads(kTicksPerPacket, kChannelsPerPacket, 1);  // 64 x 64 x 1 = 4096 threads
-  // Note: 4096 exceeds typical max threads per block (1024).
-  // A production implementation would tile this differently.
-  // For now, use 16x16 threads with grid covering the remainder.
+  // 64x64 = 4096 exceeds typical max threads per block (1024).
+  // Use 16x16 threads with grid covering the remainder.
   dim3 block_dim(16, 16, 1);
   dim3 grid_dim(
       (kTicksPerPacket + block_dim.x - 1) / block_dim.x,     // 4
       (kChannelsPerPacket + block_dim.y - 1) / block_dim.y,   // 4
       total_z);
 
+  TRACE(TLVL_DEBUG,"before scatter_adc_kernel");
   scatter_adc_kernel<<<grid_dim, block_dim>>>(
       d_adc_block, d_adc_offsets, d_lookup, d_image_block,
       static_cast<int>(packets_per_image_group),
       static_cast<int>(num_image_groups),
       static_cast<int>(columns),
       static_cast<int>(pixels_per_image_set));
-
+  TRACE(TLVL_DEBUG,"after scatter_adc_kernel");
   cudaDeviceSynchronize();
 
   // Check for errors

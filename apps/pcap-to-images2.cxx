@@ -159,6 +159,21 @@ support this directly, both TPCChannelMap and IcebergWireChannelMap will be need
 #include "detchannelmaps/TPCChannelMap.hpp"
 
 // ---------------------------------------------------------------------------
+// GPU kernel entry point (defined in pcap-to-images2-kernel.cu)
+// ---------------------------------------------------------------------------
+#ifdef HAVE_ICEBERG_GPU
+extern "C" void scatter_adc_to_images_gpu(
+    const uint8_t* adc_block,
+    const size_t*  adc_offsets,
+    const int32_t* lookup,
+    uint16_t*      image_block,
+    uint32_t       packets_per_image_group,
+    uint32_t       num_image_groups,
+    uint16_t       columns,
+    uint32_t       pixels_per_image_set);
+#endif
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -1041,16 +1056,20 @@ int main(int argc, char* argv[]) {
               << (args.use_gpu ? "GPU" : "CPU") << ")...\n";
 
     if (args.use_gpu) {
-      TLOG_ERROR() << "ERROR: --gpu not yet implemented. Use default CPU mode.\n";
+#ifdef HAVE_ICEBERG_GPU
+      scatter_adc_to_images_gpu(
+          block4_adc, block3_adc_offsets, lookup, block5_images,
+          packets_per_image_group, num_image_groups,
+          args.columns, pixels_per_image_set);
+#else
+      TLOG_ERROR() << "ERROR: --gpu requested but this build does not have GPU support.\n"
+                   << "  Rebuild with ICEBERG_GPU environment variable set and CUDAToolkit installed.\n"
+                   << "  (i.e: ICEBERG_GPU= dbt-build -c)";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images); std::free(lookup);
       return 1;
-      // Future GPU call:
-      // scatter_adc_to_images_gpu(
-      //     block4_adc, block3_adc_offsets, lookup, block5_images,
-      //     packets_per_image_group, num_image_groups,
-      //     args.columns, pixels_per_image_set);
+#endif
     } else {
       scatter_adc_to_images_cpu(
           block4_adc, block3_adc_offsets, lookup, block5_images,

@@ -21,6 +21,19 @@ daq_setup_environment()
 
 find_package(Boost COMPONENTS unit_test_framework REQUIRED)
 
+# GPU support: requires ICEBERG_GPU env var AND CUDAToolkit installed
+set(ICEBERG_GPU_ENABLED FALSE)
+if(DEFINED ENV{ICEBERG_GPU})
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    set(ICEBERG_GPU_ENABLED TRUE)
+    enable_language(CUDA)
+    message(STATUS "ICEBERG_GPU set and CUDAToolkit found — GPU targets enabled")
+  else()
+    message(FATAL_ERROR "ICEBERG_GPU is set but CUDAToolkit was not found")
+  endif()
+endif()
+
 ##############################################################################
 
 add_library(icebergwirechannelmap STATIC apps/IcebergWireChannelMap.cpp)
@@ -43,11 +56,25 @@ daq_add_application(pcap-to-images
     PcapReader.cpp 
     LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
 
-daq_add_application(pcap-to-images2
-    pcap-to-images2.cxx
-    PngImageLoader.cpp
-    PcapReader.cpp
-    LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
+if(ICEBERG_GPU_ENABLED)
+  daq_add_application(pcap-to-images2
+      pcap-to-images2.cxx
+      pcap-to-images2-kernel.cu
+      PngImageLoader.cpp
+      PcapReader.cpp
+      LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap CUDA::cudart)
+  target_compile_definitions(pcap-to-images2 PRIVATE HAVE_ICEBERG_GPU)
+  # Suppress "style of line directive is a GCC extension" from nvcc's preprocessor output.
+  # nvcc forwards -pedantic to the host compiler via -forward-unknown-to-host-compiler;
+  # we must cancel it through the same path (not -Xcompiler) so it applies to all phases.
+  target_compile_options(pcap-to-images2 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Wno-pedantic>)
+else()
+  daq_add_application(pcap-to-images2
+      pcap-to-images2.cxx
+      PngImageLoader.cpp
+      PcapReader.cpp
+      LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
+endif()
 
 daq_add_application(dune-pcap
     dune-pcap.cxx 
