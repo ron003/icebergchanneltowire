@@ -43,6 +43,12 @@ daq_add_application(pcap-to-images
     PcapReader.cpp 
     LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
 
+daq_add_application(pcap-to-images2
+    pcap-to-images2.cxx
+    PngImageLoader.cpp
+    PcapReader.cpp
+    LINK_LIBRARIES TRACE::TRACE PNG::PNG detchannelmaps::detchannelmaps fddetdataformats::fddetdataformats icebergwirechannelmap)
+
 daq_add_application(dune-pcap
     dune-pcap.cxx 
     LINK_LIBRARIES TRACE::TRACE fddetdataformats::fddetdataformats icebergwirechannelmap)

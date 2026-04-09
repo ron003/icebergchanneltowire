@@ -112,6 +112,69 @@ void PcapReader::reset() {
   }
 }
 
+uint32_t PcapReader::readPacketsBulk(uint8_t* header_block,
+                                     size_t* header_offsets,
+                                     uint8_t* adc_block,
+                                     size_t* adc_offsets,
+                                     uint32_t max_packets,
+                                     size_t header_bytes_per_pkt,
+                                     size_t adc_bytes_per_pkt,
+                                     size_t net_header_size) {
+  if (!file_.is_open() || !header_read_) {
+    return 0;
+  }
+
+  // Minimum packet size: network headers + header_bytes_per_pkt worth of frame
+  // data + adc payload. The header_bytes_per_pkt already includes net headers
+  // when called from pcap-to-images2 (74 bytes = 42 net + 32 frame headers).
+  // The ADC data starts at net_header_size + 32 (DAQEthHeader + WIBEthHeader).
+  size_t min_packet_size = net_header_size + (header_bytes_per_pkt - net_header_size) + adc_bytes_per_pkt;
+
+  uint32_t count = 0;
+  std::vector<uint8_t> pkt_buf;
+
+  while (count < max_packets) {
+    PcapPacketHeader pkt_header;
+    file_.read(reinterpret_cast<char*>(&pkt_header), sizeof(pkt_header));
+    if (file_.fail() || file_.eof()) {
+      break;
+    }
+
+    if (pkt_header.incl_len > snaplen_ || pkt_header.incl_len == 0) {
+      throw std::runtime_error("Invalid packet length in PCAP file: " + filename_);
+    }
+
+    if (pkt_header.incl_len < min_packet_size) {
+      throw std::runtime_error("Packet " + std::to_string(count) +
+                               " too small (" + std::to_string(pkt_header.incl_len) +
+                               " bytes, need " + std::to_string(min_packet_size) +
+                               ") in: " + filename_);
+    }
+
+    pkt_buf.resize(pkt_header.incl_len);
+    file_.read(reinterpret_cast<char*>(pkt_buf.data()), pkt_header.incl_len);
+    if (file_.fail()) {
+      break;
+    }
+
+    // Copy header portion (network headers + DAQEthHeader + WIBEthHeader)
+    size_t h_off = static_cast<size_t>(count) * header_bytes_per_pkt;
+    header_offsets[count] = h_off;
+    std::memcpy(header_block + h_off, pkt_buf.data(), header_bytes_per_pkt);
+
+    // Copy ADC data portion (starts after network headers + DAQEthHeader + WIBEthHeader)
+    size_t frame_hdr_size = header_bytes_per_pkt - net_header_size; // 32 bytes
+    size_t adc_start_in_pkt = net_header_size + frame_hdr_size;
+    size_t a_off = static_cast<size_t>(count) * adc_bytes_per_pkt;
+    adc_offsets[count] = a_off;
+    std::memcpy(adc_block + a_off, pkt_buf.data() + adc_start_in_pkt, adc_bytes_per_pkt);
+
+    ++count;
+  }
+
+  return count;
+}
+
 void PcapReader::close() {
   if (file_.is_open()) {
     file_.close();
