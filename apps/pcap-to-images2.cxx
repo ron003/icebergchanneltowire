@@ -61,7 +61,9 @@ loop through the image memory and create .png files.
 
 pcap-to-images2 — Full Specification
 Overview
-Like pcap-to-images, but designed with a CUDA kernel in mind for parallelizing data movement from packets to images. Uses a flat, procedural code structure (no class). Memory is laid out in 5 contiguous raw-byte blocks suitable for GPU transfer.
+Like pcap-to-images, but designed with a CUDA kernel in mind for parallelizing
+data movement from packets to images. Uses a flat, procedural code structure (no class).
+Memory is laid out in 5 contiguous raw-byte blocks suitable for GPU transfer.
 
 Command-Line Options
 Option	Default	Description
@@ -90,25 +92,36 @@ Lookup Table
 Built on CPU after the first group of 20 packets is read (to confirm crate/slot/stream values).
 1280 entries (20 packets × 64 channels per packet).
 Key: (packet_index_within_group, stream_chan) — flattened to a 1D index.
-Value: 2 destinations (fixed). Each destination: (image_index [0-5], row, col_offset). Second destination set to (-1, -1, -1) for non-wrapped wires.
-Goal: Map directly from (crate, slot, stream) → wire position(s) without going through offline channels, if the channel map supports it.
+Value: 2 destinations (fixed). Each destination: (image_index [0-5], row, col_offset).
+Second destination set to (-1, -1, -1) for non-wrapped wires.
+Goal: Map directly from (crate, slot, stream) → wire position(s) without going through offline channels,
+if the channel map supports it.
 Used on CPU in default mode (--cpu), copied to GPU when --gpu is specified.
 Packet Validation
-Ordering: Enforce the exact pattern from the spec: crate=8, slot={2,3,4}, stream={0,1,2,3,64,65,66,67} in the specified order. Fatal error if any packet deviates.
-Timestamps: All 20 packets in a group must share the same timestamp. Timestamps must increment by 2048 (0x800) between consecutive groups. Fatal error on any mismatch.
+Ordering: Enforce the exact pattern from the spec: crate=8, slot={2,3,4},
+          stream={0,1,2,3,64,65,66,67} in the specified order. Fatal error if any packet deviates.
+Timestamps: All 20 packets in a group must share the same timestamp.
+            Timestamps must increment by 2048 (0x800) between consecutive groups. Fatal error on any mismatch.
 Validation scope: Every group is validated (all groups, not just the first).
 Undersized packets: Fatal error if any packet is smaller than 7242 bytes (42 network headers + 7200 WIBEthFrame).
 Processing Pipeline
-Read entire PCAP into Blocks 1–4 using extended PcapReader (add a bulk-read method to existing PcapReader while keeping backward compatibility).
+Read entire PCAP into Blocks 1–4 using extended PcapReader (add a bulk-read
+method to existing PcapReader while keeping backward compatibility).
 Validate all groups (ordering + timestamps).
 Build lookup table from first group's header data + channel map.
-Process: For each image group, use the lookup table to extract 14-bit ADC values from packed adc_words (Block 4) and scatter them to image pixel locations (Block 5). On CPU by default; --gpu flag is a placeholder for a future CUDA kernel.
-Write PNGs: Write up to --max-png images starting from --start-group, using same PNG output as pcap-to-images.
+Process: For each image group, use the lookup table to extract 14-bit ADC
+         values from packed adc_words (Block 4) and scatter them to image
+         pixel locations (Block 5). On CPU by default; --gpu flag is a
+         placeholder for a future CUDA kernel.
+Write PNGs: Write up to --max-png images starting from --start-group, using
+            same PNG output as pcap-to-images.
 CUDA Design
 File structure: Main logic in .cxx, CUDA kernel in a companion .cu file linked together.
-Kernel workload: ADC extraction (unpack 14-bit values from packed adc_words) + scatter to image pixel locations using the lookup table.
+Kernel workload: ADC extraction (unpack 14-bit values from packed adc_words)
+                 + scatter to image pixel locations using the lookup table.
 --gpu flag: Placeholder in initial implementation. CPU path is default.
-Blocks 2, 3 (byte-offsets) and Block 5 (image data) are designed for GPU transfer. Block 5 is copied back from GPU.
+Blocks 2, 3 (byte-offsets) and Block 5 (image data) are designed for GPU
+transfer. Block 5 is copied back from GPU.
 Output
 Format: PNG files (16-bit grayscale), same as pcap-to-images.
 Naming: {prefix}{plane}{tpc}x{columns}.png (e.g., U0x256.png), with group index appended for multi-group output.
@@ -117,7 +130,9 @@ Logging
 Uses TRACE/TLOG system, identical to pcap-to-images.
 Channel Map
 Uses --plugin (default ICEBERGChannelMap) via detchannelmaps::make_map().
-Goal is a direct crate/slot/stream → wire position(s) mapping in the lookup table, bypassing offline channel numbers if possible. If TPCChannelMap doesn't support this directly, both TPCChannelMap and IcebergWireChannelMap will be needed (as in v1).
+Goal is a direct crate/slot/stream → wire position(s) mapping in the lookup
+table, bypassing offline channel numbers if possible. If TPCChannelMap doesn't
+support this directly, both TPCChannelMap and IcebergWireChannelMap will be needed (as in v1).
 */
 
 #include <stdio.h>
@@ -221,7 +236,7 @@ struct Args {
   uint32_t    max_packets   = 80000;
   uint32_t    min_packets   = 20;
   uint16_t    columns       = 256;
-  uint32_t    max_png       = 24;
+  uint32_t    max_png       = 12;
   uint32_t    start_group   = 0;
   bool        use_gpu       = false;
   bool        verbose       = false;
