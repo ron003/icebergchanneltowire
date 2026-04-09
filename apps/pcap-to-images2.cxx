@@ -219,6 +219,7 @@ struct Args {
   std::string output_prefix;
   std::string plugin        = "ICEBERGChannelMap";
   uint32_t    max_packets   = 80000;
+  uint32_t    min_packets   = 20;
   uint16_t    columns       = 256;
   uint32_t    max_png       = 24;
   uint32_t    start_group   = 0;
@@ -238,7 +239,11 @@ static void print_usage(const char* prog) {
     << "with CUDA-ready memory layout.\n"
     << "\n"
     << "Options:\n"
-    << "  --max-packets <N>   Max packets to read (default: 80000)\n"
+    << "  --max-packets <N>   Max packets to read/generate (default: 80000)\n"
+    << "  --min-packets <N>   Min packets required (default: 20). If the PCAP\n"
+    << "                      has fewer, the last group of 20 is repeated with\n"
+    << "                      adjusted timestamps to reach this count.\n"
+    << "                      Must be a multiple of the packet group size.\n"
     << "  --columns <N>       Image width in timeticks (default: 256)\n"
     << "                      Must be a positive multiple of 64.\n"
     << "  --output-dir DIR    Directory for output images (default: '.')\n"
@@ -264,6 +269,9 @@ static bool parse_args(int argc, char* argv[], Args& args) {
     }
     else if (arg == "--max-packets" && i + 1 < argc) {
       args.max_packets = static_cast<uint32_t>(std::atol(argv[++i]));
+    }
+    else if (arg == "--min-packets" && i + 1 < argc) {
+      args.min_packets = static_cast<uint32_t>(std::atol(argv[++i]));
     }
     else if (arg == "--columns" && i + 1 < argc) {
       args.columns = static_cast<uint16_t>(std::atoi(argv[++i]));
@@ -315,6 +323,11 @@ static bool parse_args(int argc, char* argv[], Args& args) {
   if (args.max_png % kImagesPerSet != 0) {
     std::cerr << "ERROR: --max-png must be a multiple of " << kImagesPerSet
               << " (got " << args.max_png << ")\n";
+    return false;
+  }
+  if (args.min_packets > args.max_packets) {
+    std::cerr << "ERROR: --min-packets (" << args.min_packets
+              << ") exceeds --max-packets (" << args.max_packets << ")\n";
     return false;
   }
   return true;
@@ -452,6 +465,106 @@ static bool build_lookup_table(int32_t* lookup,
 }
 
 // ---------------------------------------------------------------------------
+// Pad packets to reach min_packets by repeating the last group of 20
+// ---------------------------------------------------------------------------
+// Duplicates both header (Block 1) and ADC (Block 4) data from the last
+// complete group of 20 packets, adjusting the DAQEthHeader timestamp in
+// each padded header to continue the +0x800 sequence.
+// Updates Blocks 2 and 3 (offset arrays) for the new entries.
+// Returns the new total packet count.
+
+static uint32_t pad_to_min_packets(
+    uint8_t*  header_block,
+    size_t*   header_offsets,
+    uint8_t*  adc_block,
+    size_t*   adc_offsets,
+    uint32_t  current_packets,
+    uint32_t  min_packets,
+    uint32_t  max_packets) {
+
+  if (current_packets >= min_packets) {
+    return current_packets;
+  }
+
+  // The source group is the last complete group of 20 in the real data.
+  // We need at least 20 real packets to have something to copy.
+  if (current_packets < kPacketsPerGroup) {
+    std::cerr << "ERROR: Cannot pad — need at least " << kPacketsPerGroup
+              << " real packets, got " << current_packets << "\n";
+    return current_packets;
+  }
+
+  // Identify the last complete group of 20
+  uint32_t last_group_start = ((current_packets / kPacketsPerGroup) - 1) * kPacketsPerGroup;
+
+  // Get the timestamp of the last group to continue the sequence
+  const auto* last_daq_hdr = reinterpret_cast<const dunedaq::detdataformats::DAQEthHeader*>(
+      header_block + header_offsets[last_group_start] + kNetHeaderSize);
+  uint64_t last_timestamp = last_daq_hdr->get_timestamp();
+
+  // How many groups-of-20 have been read so far?
+  uint32_t existing_groups = current_packets / kPacketsPerGroup;
+
+  uint32_t target = std::min(min_packets, max_packets);
+  // Round target up to a multiple of kPacketsPerGroup
+  if (target % kPacketsPerGroup != 0) {
+    target = ((target + kPacketsPerGroup - 1) / kPacketsPerGroup) * kPacketsPerGroup;
+  }
+  if (target > max_packets) {
+    target = (max_packets / kPacketsPerGroup) * kPacketsPerGroup;
+  }
+
+  TLOG() << "Padding from " << current_packets << " to " << target
+            << " packets (repeating last group of 20)\n";
+
+  uint32_t pkt = current_packets;
+  uint32_t groups_added = 0;
+
+  while (pkt + kPacketsPerGroup <= target) {
+    // Timestamp for this new group
+    uint64_t new_ts = last_timestamp + static_cast<uint64_t>(existing_groups + groups_added) * 0x800u
+                      - last_timestamp  // cancel out to get absolute
+                      + last_timestamp; // ... which simplifies to:
+    // Actually: the Nth group (0-indexed) has timestamp = group0_ts + N * 0x800.
+    // existing_groups groups are already present, so the next group index is
+    // (existing_groups + groups_added).
+    new_ts = last_timestamp + static_cast<uint64_t>(1 + groups_added) * 0x800u;
+
+    for (uint16_t p = 0; p < kPacketsPerGroup; ++p) {
+      uint32_t src_pkt = last_group_start + p;
+      uint32_t dst_pkt = pkt + p;
+
+      // Copy header block entry
+      size_t dst_h_off = static_cast<size_t>(dst_pkt) * kHeaderBytesPerPkt;
+      header_offsets[dst_pkt] = dst_h_off;
+      std::memcpy(header_block + dst_h_off,
+                   header_block + header_offsets[src_pkt],
+                   kHeaderBytesPerPkt);
+
+      // Patch the timestamp in the copied DAQEthHeader
+      auto* dst_daq_hdr = reinterpret_cast<dunedaq::detdataformats::DAQEthHeader*>(
+          header_block + dst_h_off + kNetHeaderSize);
+      dst_daq_hdr->timestamp = new_ts;
+
+      // Copy ADC block entry
+      size_t dst_a_off = static_cast<size_t>(dst_pkt) * kAdcBytesPerPacket;
+      adc_offsets[dst_pkt] = dst_a_off;
+      std::memcpy(adc_block + dst_a_off,
+                   adc_block + adc_offsets[src_pkt],
+                   kAdcBytesPerPacket);
+    }
+
+    pkt += kPacketsPerGroup;
+    ++groups_added;
+  }
+
+  TLOG() << "Padded " << groups_added << " groups (" << (groups_added * kPacketsPerGroup)
+            << " packets), total now " << pkt << "\n";
+
+  return pkt;
+}
+
+// ---------------------------------------------------------------------------
 // Validate packet groups
 // ---------------------------------------------------------------------------
 
@@ -536,7 +649,7 @@ static bool validate_packets(const uint8_t* header_block,
     first_group = false;
   }
 
-  std::cout << "Validated " << num_groups_of_20 << " groups of " << kPacketsPerGroup
+  TLOG() << "Validated " << num_groups_of_20 << " groups of " << kPacketsPerGroup
             << " packets OK\n";
   return true;
 }
@@ -654,7 +767,7 @@ static bool write_png_images(const uint16_t* image_block,
     return false;
   }
 
-  std::cout << "Writing PNG images for groups " << start_group
+  TLOG() << "Writing PNG images for groups " << start_group
             << ".." << (end_group - 1) << " ("
             << (end_group - start_group) * kImagesPerSet << " images)\n";
 
@@ -694,7 +807,7 @@ static bool write_png_images(const uint16_t* image_block,
       }
     }
 
-    std::cout << "  Group " << ig << ": " << kImagesPerSet << " images written\n";
+    TLOG() << "  Group " << ig << ": " << kImagesPerSet << " images written\n";
   }
 
   return true;
@@ -725,54 +838,75 @@ int main(int argc, char* argv[]) {
                 << " (multiple of " << packets_per_image_group << ")\n";
     }
 
+    // Validate min_packets is a multiple of packets_per_image_group
+    if (args.min_packets % packets_per_image_group != 0) {
+      uint32_t rounded = ((args.min_packets + packets_per_image_group - 1)
+                          / packets_per_image_group) * packets_per_image_group;
+      if (rounded > args.max_packets) {
+        rounded = (args.max_packets / packets_per_image_group) * packets_per_image_group;
+      }
+      std::cout << "NOTE: --min-packets rounded to " << rounded
+                << " (multiple of " << packets_per_image_group << ")\n";
+      args.min_packets = rounded;
+    }
+
+    // Re-check after rounding
+    if (args.min_packets > args.max_packets) {
+      std::cerr << "ERROR: --min-packets (" << args.min_packets
+                << ") exceeds --max-packets (" << args.max_packets
+                << ") after rounding\n";
+      return 1;
+    }
+
     uint32_t max_image_groups     = args.max_packets / packets_per_image_group;
     uint32_t pixels_per_image_set = kRowsPerImageSet * args.columns;
 
-    std::cout << "Configuration:\n"
-              << "  max-packets:           " << args.max_packets << "\n"
-              << "  columns:               " << args.columns << "\n"
-              << "  packets/image-group:   " << packets_per_image_group << "\n"
-              << "  max image groups:      " << max_image_groups << "\n"
-              << "  pixels/image-set:      " << pixels_per_image_set << "\n"
-              << "  max-png:               " << args.max_png << "\n"
-              << "  start-group:           " << args.start_group << "\n"
-              << "  mode:                  " << (args.use_gpu ? "GPU" : "CPU") << "\n";
+    TLOG() << "Configuration:\n";
+    TLOG() << "  max-packets:           " << args.max_packets << "\n";
+    TLOG() << "  min-packets:           " << args.min_packets << "\n";
+    TLOG() << "  columns:               " << args.columns << "\n";
+    TLOG() << "  packets/image-group:   " << packets_per_image_group << "\n";
+    TLOG() << "  max image groups:      " << max_image_groups << "\n";
+    TLOG() << "  pixels/image-set:      " << pixels_per_image_set << "\n";
+    TLOG() << "  max-png:               " << args.max_png << "\n";
+    TLOG() << "  start-group:           " << args.start_group << "\n";
+    TLOG() << "  mode:                  " << (args.use_gpu ? "GPU" : "CPU") << "\n";
 
     // ---- Allocate 5 memory blocks ---------------------------------------
-    std::cout << "\nAllocating memory blocks...\n";
+    TLOG() << "Allocating memory blocks...\n";
 
     // Block 1: packet headers (74 B each)
     size_t block1_size = static_cast<size_t>(args.max_packets) * kHeaderBytesPerPkt;
     uint8_t* block1_headers = static_cast<uint8_t*>(std::malloc(block1_size));
     if (!block1_headers) {
-      std::cerr << "ERROR: Failed to allocate Block 1 (" << block1_size << " bytes)\n";
+      TLOG_ERROR() << "ERROR: Failed to allocate Block 1 (" << block1_size << " bytes)\n";
       return 1;
     }
     std::memset(block1_headers, 0, block1_size);
-    std::cout << "  Block 1 (headers):     " << block1_size << " bytes ("
+    TLOG() << "  Block 1 (headers):     " << block1_size << " bytes ("
               << (block1_size >> 20) << " MB)\n";
 
     // Block 2: header byte-offsets
     size_t block2_size = static_cast<size_t>(args.max_packets) * sizeof(size_t);
     size_t* block2_hdr_offsets = static_cast<size_t*>(std::malloc(block2_size));
     if (!block2_hdr_offsets) {
-      std::cerr << "ERROR: Failed to allocate Block 2\n";
+      TLOG_ERROR() << "ERROR: Failed to allocate Block 2\n";
       std::free(block1_headers);
       return 1;
     }
     std::memset(block2_hdr_offsets, 0, block2_size);
-    std::cout << "  Block 2 (hdr offsets): " << block2_size << " bytes\n";
+    TLOG() << "  Block 2 (hdr offsets): " << block2_size << " bytes\n";
 
     // Block 3: ADC byte-offsets
     size_t block3_size = static_cast<size_t>(args.max_packets) * sizeof(size_t);
     size_t* block3_adc_offsets = static_cast<size_t*>(std::malloc(block3_size));
     if (!block3_adc_offsets) {
-      std::cerr << "ERROR: Failed to allocate Block 3\n";
+      TLOG_ERROR() << "ERROR: Failed to allocate Block 3\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       return 1;
     }
     std::memset(block3_adc_offsets, 0, block3_size);
-    std::cout << "  Block 3 (ADC offsets): " << block3_size << " bytes\n";
+    TLOG() << "  Block 3 (ADC offsets): " << block3_size << " bytes\n";
 
     // Block 4: ADC data (7168 B each)
     size_t block4_size = static_cast<size_t>(args.max_packets) * kAdcBytesPerPacket;
@@ -784,7 +918,7 @@ int main(int argc, char* argv[]) {
       return 1;
     }
     std::memset(block4_adc, 0, block4_size);
-    std::cout << "  Block 4 (ADC data):    " << block4_size << " bytes ("
+    TLOG() << "  Block 4 (ADC data):    " << block4_size << " bytes ("
               << (block4_size >> 20) << " MB)\n";
 
     // Block 5: image pixels (uint16_t, all groups)
@@ -792,22 +926,22 @@ int main(int argc, char* argv[]) {
     size_t block5_size   = block5_pixels * sizeof(uint16_t);
     uint16_t* block5_images = static_cast<uint16_t*>(std::malloc(block5_size));
     if (!block5_images) {
-      std::cerr << "ERROR: Failed to allocate Block 5 (" << block5_size << " bytes)\n";
+      TLOG_ERROR() << "ERROR: Failed to allocate Block 5 (" << block5_size << " bytes)\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       return 1;
     }
     std::memset(block5_images, 0, block5_size);
-    std::cout << "  Block 5 (images):      " << block5_size << " bytes ("
+    TLOG() << "  Block 5 (images):      " << block5_size << " bytes ("
               << (block5_size >> 20) << " MB)\n";
 
     size_t total_alloc = block1_size + block2_size + block3_size
                          + block4_size + block5_size;
-    std::cout << "  Total allocated:       " << total_alloc << " bytes ("
+    TLOG() << "  Total allocated:       " << total_alloc << " bytes ("
               << (total_alloc >> 20) << " MB)\n\n";
 
     // ---- Read PCAP into Blocks 1-4 -------------------------------------
-    std::cout << "Reading PCAP file: " << args.input_file << "\n";
+    TLOG() << "Reading PCAP file: " << args.input_file << "\n";
 
     PcapReader pcap(args.input_file);
     uint32_t total_packets = pcap.readPacketsBulk(
@@ -818,10 +952,10 @@ int main(int argc, char* argv[]) {
         kAdcBytesPerPacket,
         kNetHeaderSize);
 
-    std::cout << "Read " << total_packets << " packets from PCAP\n";
+    TLOG() << "Read " << total_packets << " packets from PCAP\n";
 
     if (total_packets == 0) {
-      std::cerr << "ERROR: No packets in PCAP file\n";
+      TLOG_ERROR() << "ERROR: No packets in PCAP file\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images);
@@ -832,13 +966,13 @@ int main(int argc, char* argv[]) {
     if (total_packets % packets_per_image_group != 0) {
       uint32_t usable = (total_packets / packets_per_image_group)
                         * packets_per_image_group;
-      std::cout << "NOTE: Using " << usable << " of " << total_packets
+      TLOG_NOTICE() << "NOTE: Using " << usable << " of " << total_packets
                 << " packets (discarding " << (total_packets - usable)
                 << " trailing packets)\n";
       total_packets = usable;
     }
     if (total_packets == 0) {
-      std::cerr << "ERROR: Not enough packets for one image group ("
+      TLOG_ERROR() << "ERROR: Not enough packets for one image group ("
                 << packets_per_image_group << " needed)\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
@@ -846,12 +980,20 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
+    // ---- Pad to min-packets if needed -----------------------------------
+    if (total_packets < args.min_packets) {
+      total_packets = pad_to_min_packets(
+          block1_headers, block2_hdr_offsets,
+          block4_adc, block3_adc_offsets,
+          total_packets, args.min_packets, args.max_packets);
+    }
+
     uint32_t num_image_groups = total_packets / packets_per_image_group;
-    std::cout << "Image groups: " << num_image_groups
+    TLOG() << "Image groups: " << num_image_groups
               << " (of max " << max_image_groups << ")\n";
 
     // ---- Validate all groups of 20 -------------------------------------
-    std::cout << "Validating packet groups...\n";
+    TLOG() << "Validating packet groups...\n";
     if (!validate_packets(block1_headers, block2_hdr_offsets,
                           total_packets, args.verbose)) {
       std::free(block1_headers); std::free(block2_hdr_offsets);
@@ -861,11 +1003,11 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Build lookup table ---------------------------------------------
-    std::cout << "Building lookup table...\n";
+    TLOG() << "Building lookup table...\n";
     int32_t* lookup = static_cast<int32_t*>(
         std::malloc(static_cast<size_t>(kLookupTotalInts) * sizeof(int32_t)));
     if (!lookup) {
-      std::cerr << "ERROR: Failed to allocate lookup table\n";
+      TLOG_ERROR() << "ERROR: Failed to allocate lookup table\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images);
@@ -880,11 +1022,11 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Scatter ADC data into image block ------------------------------
-    std::cout << "Scattering ADC data to images ("
+    TLOG() << "Scattering ADC data to images ("
               << (args.use_gpu ? "GPU" : "CPU") << ")...\n";
 
     if (args.use_gpu) {
-      std::cerr << "ERROR: --gpu not yet implemented. Use default CPU mode.\n";
+      TLOG_ERROR() << "ERROR: --gpu not yet implemented. Use default CPU mode.\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images); std::free(lookup);
@@ -901,7 +1043,7 @@ int main(int argc, char* argv[]) {
           args.columns, pixels_per_image_set);
     }
 
-    std::cout << "Scatter complete.\n";
+    TLOG() << "Scatter complete.\n";
 
     // ---- Write PNG images -----------------------------------------------
     if (!write_png_images(block5_images, num_image_groups,
@@ -922,11 +1064,11 @@ int main(int argc, char* argv[]) {
     std::free(block4_adc);
     std::free(block5_images);
 
-    std::cout << "Success!\n";
+    TLOG_INFO() << "Success!\n";
     return 0;
 
   } catch (const std::exception& e) {
-    std::cerr << "Fatal error: " << e.what() << "\n";
+    TLOG_ERROR() << "Fatal error: " << e.what() << "\n";
     return 1;
   }
 }
