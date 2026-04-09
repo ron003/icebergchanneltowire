@@ -729,8 +729,11 @@ static void scatter_adc_to_images_cpu(
     uint32_t        packets_per_image_group,
     uint32_t        num_image_groups,
     uint16_t        columns,
-    uint32_t        pixels_per_image_set) {
-
+    uint32_t        pixels_per_image_set) 
+{
+  TLOG_DEBUG(1) << "packets_per_image_group="<<packets_per_image_group
+                << " num_image_groups="<<num_image_groups
+                << " pixels_per_image_set="<<pixels_per_image_set;
   uint32_t sub_groups_per_image = packets_per_image_group / kPacketsPerGroup;
 
   for (uint32_t ig = 0; ig < num_image_groups; ++ig) {

@@ -135,6 +135,10 @@ extern "C" void scatter_adc_to_images_gpu(
     uint16_t       columns,
     uint32_t       pixels_per_image_set)
 {
+  int sub_groups_per_image = packets_per_image_group / kPacketsPerGroup;
+  int total_z = num_image_groups * sub_groups_per_image * kPacketsPerGroup;
+  TRACE_DBG(1,"packets_per_image_group=%u num_image_groups=%u pixels_per_image_set=%u total_z=%d"
+            , packets_per_image_group, num_image_groups, pixels_per_image_set, total_z);
   // --- Allocate device memory ---
   size_t total_packets = static_cast<size_t>(num_image_groups) * packets_per_image_group;
   size_t adc_block_size    = total_packets * kAdcWordsPerTs * kTicksPerPacket * sizeof(uint64_t);
@@ -160,8 +164,6 @@ extern "C" void scatter_adc_to_images_gpu(
   cudaMemset(d_image_block, 0,           image_block_size);
 
   // --- Launch kernel ---
-  int sub_groups_per_image = packets_per_image_group / kPacketsPerGroup;
-  int total_z = num_image_groups * sub_groups_per_image * kPacketsPerGroup;
 
   // 64x64 = 4096 exceeds typical max threads per block (1024).
   // Use 16x16 threads with grid covering the remainder.
