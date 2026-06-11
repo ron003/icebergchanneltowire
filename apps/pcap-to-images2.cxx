@@ -1082,7 +1082,7 @@ int main(int argc, char* argv[]) {
       TLOG() << "Scatter via cpu complete.\n";
     }
 
-    // ---- Optionally (via TLOG_DEBUG_SCOPED) Block 5 to raw file for debugging ---------------
+    // ---- Optionally (via TLOG_DEBUG_SCOPED) display first 16 pixels of first 4 rows of first image for debugging ---------------
     TLOG_DEBUG_SCOPED(10) {
       uint64_t* as_uint64 = reinterpret_cast<uint64_t*>(block5_images); // for 4 16-bit pixels per 64-bit word
       TLOG_ADD       << std::setfill('0') << std::setw(16) << std::hex << as_uint64[  0] << " " << as_uint64[  1] << " " << as_uint64[  2] << " " << as_uint64[  3];
