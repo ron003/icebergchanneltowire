@@ -1064,6 +1064,7 @@ int main(int argc, char* argv[]) {
           block4_adc, block3_adc_offsets, lookup, block5_images,
           packets_per_image_group, num_image_groups,
           args.columns, pixels_per_image_set);
+      TLOG() << "Scatter via gpu complete.\n";
 #else
       TLOG_ERROR() << "ERROR: --gpu requested but this build does not have GPU support.\n"
                    << "  Rebuild with ICEBERG_GPU environment variable set and CUDAToolkit installed.\n"
@@ -1078,10 +1079,17 @@ int main(int argc, char* argv[]) {
           block4_adc, block3_adc_offsets, lookup, block5_images,
           packets_per_image_group, num_image_groups,
           args.columns, pixels_per_image_set);
+      TLOG() << "Scatter via cpu complete.\n";
     }
 
-    TLOG() << "Scatter complete.\n";
-
+    // ---- Optionally (via TLOG_DEBUG_SCOPED) Block 5 to raw file for debugging ---------------
+    TLOG_DEBUG_SCOPED(10) {
+      uint64_t* as_uint64 = reinterpret_cast<uint64_t*>(block5_images); // for 4 16-bit pixels per 64-bit word
+      TLOG_ADD       << std::setfill('0') << std::setw(16) << std::hex << as_uint64[  0] << " " << as_uint64[  1] << " " << as_uint64[  2] << " " << as_uint64[  3];
+      TLOG_DEBUG(13) << std::setfill('0') << std::setw(16) << std::hex << as_uint64[192] << " " << as_uint64[193] << " " << as_uint64[194] << " " << as_uint64[195];
+      TLOG_DEBUG(12) << std::setfill('0') << std::setw(16) << std::hex << as_uint64[128] << " " << as_uint64[129] << " " << as_uint64[130] << " " << as_uint64[131];
+      TLOG_DEBUG(11) << std::setfill('0') << std::setw(16) << std::hex << as_uint64[ 64] << " " << as_uint64[ 65] << " " << as_uint64[ 66] << " " << as_uint64[ 67];
+    }
     // ---- Write PNG images -----------------------------------------------
     if (!write_png_images(block5_images, num_image_groups,
                           args.columns, pixels_per_image_set,
