@@ -1085,10 +1085,10 @@ int main(int argc, char* argv[]) {
     // ---- Optionally (via TLOG_DEBUG_SCOPED) display first 16 pixels of first 4 rows of first image for debugging ---------------
     TLOG_DEBUG_SCOPED(10) {
       uint64_t* as_uint64 = reinterpret_cast<uint64_t*>(block5_images); // for 4 16-bit pixels per 64-bit word
-      TLOG_ADD       << "image0 row0:" << std::setfill('0') << std::setw(16) << std::hex << as_uint64[  0] << " " << as_uint64[  1] << " " << as_uint64[  2] << " " << as_uint64[  3];
-      TLOG_DEBUG(13) << "image0 row3:" << std::setfill('0') << std::setw(16) << std::hex << as_uint64[192] << " " << as_uint64[193] << " " << as_uint64[194] << " " << as_uint64[195];
-      TLOG_DEBUG(12) << "image0 row2:" << std::setfill('0') << std::setw(16) << std::hex << as_uint64[128] << " " << as_uint64[129] << " " << as_uint64[130] << " " << as_uint64[131];
-      TLOG_DEBUG(11) << "image0 row1:" << std::setfill('0') << std::setw(16) << std::hex << as_uint64[ 64] << " " << as_uint64[ 65] << " " << as_uint64[ 66] << " " << as_uint64[ 67];
+      TLOG_ADD       << "image0 row0: " << std::setfill('0') << std::setw(16) << std::hex << as_uint64[  0] << " " << as_uint64[  1] << " " << as_uint64[  2] << " " << as_uint64[  3];
+      TLOG_DEBUG(13) << "image0 row3: " << std::setfill('0') << std::setw(16) << std::hex << as_uint64[192] << " " << as_uint64[193] << " " << as_uint64[194] << " " << as_uint64[195];
+      TLOG_DEBUG(12) << "image0 row2: " << std::setfill('0') << std::setw(16) << std::hex << as_uint64[128] << " " << as_uint64[129] << " " << as_uint64[130] << " " << as_uint64[131];
+      TLOG_DEBUG(11) << "image0 row1: " << std::setfill('0') << std::setw(16) << std::hex << as_uint64[ 64] << " " << as_uint64[ 65] << " " << as_uint64[ 66] << " " << as_uint64[ 67];
     }
     // ---- Write PNG images -----------------------------------------------
     if (!write_png_images(block5_images, num_image_groups,
