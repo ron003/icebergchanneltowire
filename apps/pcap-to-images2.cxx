@@ -441,6 +441,9 @@ static bool build_lookup_table(
 
       // offline channel -> wire(s)  (1 or 2 for wrapped wires)
       std::vector<geo::WireID> wire_ids = geom_map.ChannelToWire(off_chan);
+      TLOG_DEBUG(3) << "pkt_idx:" << pkt_idx << " stream_chan:" << stream_chan << "/" << kChannelsPerPacket
+                    << " Offline channel " << off_chan
+                    << " maps to " << wire_ids.size() << " wire(s)";
 
       LookupEntry& entry = channel_to_wire_lut[pkt_idx][stream_chan];
 
