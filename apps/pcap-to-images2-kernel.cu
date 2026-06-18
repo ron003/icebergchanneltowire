@@ -11,16 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include "TRACE/trace.h"
-
-// Constants (must match pcap-to-images2.cxx)
-static constexpr int kChannelsPerPacket  = 64;
-static constexpr int kTicksPerPacket     = 64;
-static constexpr int kBitsPerAdc         = 14;
-static constexpr int kMax14BitAdc        = (1 << kBitsPerAdc) - 1;
-static constexpr int kAdcWordsPerTs      = 14;   // 64 channels * 14 bits / 64 bits
-static constexpr int kPacketsPerGroup    = 20;
-static constexpr int kDestsPerEntry      = 2;
-static constexpr int kFieldsPerDest      = 3;
+#include "ScatterLookupTable.h"
 
 // ---------------------------------------------------------------------------
 // Device: extract a single 14-bit ADC value from packed adc_words
@@ -58,10 +49,10 @@ __device__ static inline uint16_t device_extract_adc(
 //   z: flattened (image_group * sub_groups_per_image * 20 + sg * 20 + pkt_in_20)
 
 __global__ void scatter_adc_kernel(
-    const uint8_t*  __restrict__ adc_block,
-    const size_t*   __restrict__ adc_offsets,
-    const int32_t*  __restrict__ lookup,
-    uint16_t*       __restrict__ image_block,
+    const uint8_t*       __restrict__ adc_block,
+    const size_t*        __restrict__ adc_offsets,
+    const LookupEntry*   __restrict__ channel_to_wire_lut,
+    uint16_t*            __restrict__ image_block,
     int             packets_per_image_group,
     int             num_image_groups,
     int             columns,
@@ -95,27 +86,15 @@ __global__ void scatter_adc_kernel(
   uint16_t adc = device_extract_adc(adc_data, channel, sample);
 
   // Lookup destinations
-  int lk_base = (pkt_in_20 * kChannelsPerPacket + channel) * kDestsPerEntry * kFieldsPerDest;
+  const LookupEntry& entry = channel_to_wire_lut[pkt_in_20 * kChannelsPerPacket + channel];
   int image_set_pixel_base = ig * pixels_per_image_set;
 
   for (int d = 0; d < kDestsPerEntry; ++d) {
-    int img_idx = lookup[lk_base + d * kFieldsPerDest + 0];
-    int row     = lookup[lk_base + d * kFieldsPerDest + 1];
+    int img_idx = entry.dest[d].image_idx;
+    int row     = entry.dest[d].row;
     if (img_idx < 0) continue;
 
-    // image_row_base inlined (must match the host code)
-    int row_base;
-    switch (img_idx) {
-      case 0: row_base = 0;                     break; // U0
-      case 1: row_base = 316;                   break; // U1
-      case 2: row_base = 632;                   break; // V0
-      case 3: row_base = 947;                   break; // V1
-      case 4: row_base = 1262;                  break; // Z0
-      case 5: row_base = 1502;                  break; // Z1
-      default: continue;
-    }
-
-    int row_in_set = row_base + row;
+    int row_in_set = image_row_base_for_lut(img_idx) + row;
     int px = image_set_pixel_base + row_in_set * columns + col;
     image_block[px] = adc;
   }
@@ -126,14 +105,14 @@ __global__ void scatter_adc_kernel(
 // ---------------------------------------------------------------------------
 
 extern "C" void scatter_adc_to_images_gpu(
-    const uint8_t* adc_block,
-    const size_t*  adc_offsets,
-    const int32_t* lookup,
-    uint16_t*      image_block,
-    uint32_t       packets_per_image_group,
-    uint32_t       num_image_groups,
-    uint16_t       columns,
-    uint32_t       pixels_per_image_set)
+    const uint8_t*       adc_block,
+    const size_t*        adc_offsets,
+    const LookupEntry*   channel_to_wire_lut,
+    uint16_t*            image_block,
+    uint32_t             packets_per_image_group,
+    uint32_t             num_image_groups,
+    uint16_t             columns,
+    uint32_t             pixels_per_image_set)
 {
   int sub_groups_per_image = packets_per_image_group / kPacketsPerGroup;
   int total_z = num_image_groups * sub_groups_per_image * kPacketsPerGroup;
@@ -143,24 +122,23 @@ extern "C" void scatter_adc_to_images_gpu(
   size_t total_packets = static_cast<size_t>(num_image_groups) * packets_per_image_group;
   size_t adc_block_size    = total_packets * kAdcWordsPerTs * kTicksPerPacket * sizeof(uint64_t);
   size_t offsets_size      = total_packets * sizeof(size_t);
-  size_t lookup_size       = kPacketsPerGroup * kChannelsPerPacket
-                             * kDestsPerEntry * kFieldsPerDest * sizeof(int32_t);
+  size_t lut_size          = sizeof(LookupEntry) * kLookupEntries;
   size_t image_block_size  = static_cast<size_t>(num_image_groups) * pixels_per_image_set
                              * sizeof(uint16_t);
 
-  uint8_t*  d_adc_block    = nullptr;
-  size_t*   d_adc_offsets  = nullptr;
-  int32_t*  d_lookup       = nullptr;
-  uint16_t* d_image_block  = nullptr;
+  uint8_t*      d_adc_block            = nullptr;
+  size_t*       d_adc_offsets          = nullptr;
+  LookupEntry*  d_channel_to_wire_lut  = nullptr;
+  uint16_t*     d_image_block          = nullptr;
 
-  cudaMalloc(&d_adc_block,   adc_block_size);
-  cudaMalloc(&d_adc_offsets, offsets_size);
-  cudaMalloc(&d_lookup,      lookup_size);
-  cudaMalloc(&d_image_block, image_block_size);
+  cudaMalloc(&d_adc_block,            adc_block_size);
+  cudaMalloc(&d_adc_offsets,          offsets_size);
+  cudaMalloc(&d_channel_to_wire_lut,  lut_size);
+  cudaMalloc(&d_image_block,          image_block_size);
 
-  cudaMemcpy(d_adc_block,   adc_block,   adc_block_size,   cudaMemcpyHostToDevice);
-  cudaMemcpy(d_adc_offsets, adc_offsets, offsets_size,      cudaMemcpyHostToDevice);
-  cudaMemcpy(d_lookup,      lookup,      lookup_size,       cudaMemcpyHostToDevice);
+  cudaMemcpy(d_adc_block,            adc_block,            adc_block_size,  cudaMemcpyHostToDevice);
+  cudaMemcpy(d_adc_offsets,          adc_offsets,          offsets_size,     cudaMemcpyHostToDevice);
+  cudaMemcpy(d_channel_to_wire_lut,  channel_to_wire_lut,  lut_size,        cudaMemcpyHostToDevice);
   cudaMemset(d_image_block, 0,           image_block_size);
 
   // --- Launch kernel ---
@@ -175,7 +153,7 @@ extern "C" void scatter_adc_to_images_gpu(
 
   TRACE(TLVL_DEBUG,"before scatter_adc_kernel");
   scatter_adc_kernel<<<grid_dim, block_dim>>>(
-      d_adc_block, d_adc_offsets, d_lookup, d_image_block,
+      d_adc_block, d_adc_offsets, d_channel_to_wire_lut, d_image_block,
       static_cast<int>(packets_per_image_group),
       static_cast<int>(num_image_groups),
       static_cast<int>(columns),
@@ -195,6 +173,6 @@ extern "C" void scatter_adc_to_images_gpu(
   // --- Free device memory ---
   cudaFree(d_adc_block);
   cudaFree(d_adc_offsets);
-  cudaFree(d_lookup);
+  cudaFree(d_channel_to_wire_lut);
   cudaFree(d_image_block);
 }

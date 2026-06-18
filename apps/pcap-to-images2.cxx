@@ -157,20 +157,21 @@ support this directly, both TPCChannelMap and IcebergWireChannelMap will be need
 #include "PngImageLoader.hpp"
 #include "PcapReader.hpp"
 #include "detchannelmaps/TPCChannelMap.hpp"
+#include "ScatterLookupTable.h"
 
 // ---------------------------------------------------------------------------
 // GPU kernel entry point (defined in pcap-to-images2-kernel.cu)
 // ---------------------------------------------------------------------------
 #ifdef HAVE_ICEBERG_GPU
 extern "C" void scatter_adc_to_images_gpu(
-    const uint8_t* adc_block,
-    const size_t*  adc_offsets,
-    const int32_t* lookup,
-    uint16_t*      image_block,
-    uint32_t       packets_per_image_group,
-    uint32_t       num_image_groups,
-    uint16_t       columns,
-    uint32_t       pixels_per_image_set);
+    const uint8_t*       adc_block,
+    const size_t*        adc_offsets,
+    const LookupEntry*   channel_to_wire_lut,
+    uint16_t*            image_block,
+    uint32_t             packets_per_image_group,
+    uint32_t             num_image_groups,
+    uint16_t             columns,
+    uint32_t             pixels_per_image_set);
 #endif
 
 // ---------------------------------------------------------------------------
@@ -178,12 +179,6 @@ extern "C" void scatter_adc_to_images_gpu(
 // ---------------------------------------------------------------------------
 
 using dunedaq::fddetdataformats::WIBEthFrame;
-
-static constexpr uint16_t kChannelsPerPacket  = WIBEthFrame::s_num_channels;           // 64
-static constexpr uint16_t kTicksPerPacket     = WIBEthFrame::s_time_samples_per_frame; // 64
-static constexpr uint16_t kBitsPerAdc         = WIBEthFrame::s_bits_per_adc;           // 14
-static constexpr uint16_t kAdcWordsPerTs      = WIBEthFrame::s_num_adc_words_per_ts;   // 14
-static constexpr uint16_t kMax14BitAdc        = (1u << kBitsPerAdc) - 1u;
 
 // Network header sizes
 static constexpr size_t kEthernetHeaderSize = 14;
@@ -204,7 +199,6 @@ static constexpr size_t kHeaderBytesPerPkt  = kNetHeaderSize + kFrameHeaderSize;
 
 // ICEBERG detector constants
 static constexpr uint32_t kTotalChannels    = 1280;
-static constexpr uint16_t kPacketsPerGroup  = kTotalChannels / kChannelsPerPacket;     // 20
 
 // Plane row counts (same as pcap-to-images)
 static constexpr uint16_t kRowsU = 316;
@@ -227,14 +221,10 @@ static constexpr PacketPattern kExpectedOrder[20] = {
   {8, 4,  0}, {8, 4,  1}, {8, 4,  2}, {8, 4,  3},
 };
 
-// Lookup table dimensions.
-// 1280 entries (20 packets x 64 channels), each with 2 destinations,
-// each destination has 3 int32_t fields: (image_idx, row, col_offset).
-// Invalid destination: image_idx == -1.
-static constexpr int kLookupEntries     = kPacketsPerGroup * kChannelsPerPacket; // 1280
-static constexpr int kDestsPerEntry     = 2;
-static constexpr int kFieldsPerDest     = 3;  // image_idx, row, col_offset
-static constexpr int kLookupTotalInts   = kLookupEntries * kDestsPerEntry * kFieldsPerDest;
+// Lookup table dimensions are defined in ScatterLookupTable.h:
+//   kLookupEntries (1280 = 20 packets x 64 channels)
+//   LookupEntry with 2 LookupDest (image_idx, row, col_offset each)
+//   Invalid destination: image_idx == -1.
 
 // Image indices within a set of 6: 0=U0, 1=U1, 2=V0, 3=V1, 4=Z0, 5=Z1
 static constexpr int kImagesPerSet = 6;
@@ -400,18 +390,16 @@ static unsigned int tpc_for_image(int image_idx) {
 }
 
 // ---------------------------------------------------------------------------
-// Build lookup table
+// Build channel-to-wire lookup table
 // ---------------------------------------------------------------------------
-// Maps (pkt_index_within_group [0..19], stream_chan [0..63]) to up to 2
-// image destinations: (image_index [0..5], wire_row, col_offset).
-//
-// Layout as a flat int32_t array:
-//   lookup[ (pkt_idx*64 + stream_chan) * 6 + dest*3 + field ]
-//   field 0 = image_idx, field 1 = row, field 2 = col_offset (always 0;
-//   column position comes from the time sample index at scatter time).
+// Populates channel_to_wire_lut[pkt_idx][stream_chan] (20 x 64) where each
+// LookupEntry holds up to 2 LookupDest {image_idx, row, col_offset}.
+// See ScatterLookupTable.h for struct definitions.
 
-static bool build_lookup_table(int32_t* lookup,
-                                const std::string& plugin_name) {
+static bool build_lookup_table(
+    LookupEntry  channel_to_wire_lut[kPacketsPerGroup][kChannelsPerPacket],
+    const std::string& plugin_name) {
+
   // Load the detchannelmaps plugin for crate/slot/stream -> offline channel
   std::shared_ptr<dunedaq::detchannelmaps::TPCChannelMap> chan_map;
   try {
@@ -429,10 +417,9 @@ static bool build_lookup_table(int32_t* lookup,
   // IcebergWireChannelMap for offline_channel -> (plane, tpc, wire)
   geo::IcebergWireChannelMap geom_map;
 
-  // Initialise every entry to "invalid" (-1)
-  for (int i = 0; i < kLookupTotalInts; ++i) {
-    lookup[i] = -1;
-  }
+  // Initialise every destination to "invalid" (-1)
+  std::memset(channel_to_wire_lut, -1,
+              sizeof(LookupEntry) * kPacketsPerGroup * kChannelsPerPacket);
 
   for (int pkt_idx = 0; pkt_idx < kPacketsPerGroup; ++pkt_idx) {
     uint16_t crate  = kExpectedOrder[pkt_idx].crate;
@@ -455,8 +442,7 @@ static bool build_lookup_table(int32_t* lookup,
       // offline channel -> wire(s)  (1 or 2 for wrapped wires)
       std::vector<geo::WireID> wire_ids = geom_map.ChannelToWire(off_chan);
 
-      int entry_base = (pkt_idx * kChannelsPerPacket + stream_chan)
-                       * kDestsPerEntry * kFieldsPerDest;
+      LookupEntry& entry = channel_to_wire_lut[pkt_idx][stream_chan];
 
       for (size_t d = 0; d < wire_ids.size() && d < static_cast<size_t>(kDestsPerEntry); ++d) {
         const auto& wid = wire_ids[d];
@@ -475,18 +461,17 @@ static bool build_lookup_table(int32_t* lookup,
           continue;
         }
 
-        int dest_base = entry_base + static_cast<int>(d) * kFieldsPerDest;
-        lookup[dest_base + 0] = image_idx;
-        lookup[dest_base + 1] = static_cast<int32_t>(wid.Wire);
-        lookup[dest_base + 2] = 0; // col_offset: unused; time sample index provides column
+        entry.dest[d].image_idx  = image_idx;
+        entry.dest[d].row        = static_cast<int32_t>(wid.Wire);
+        entry.dest[d].col_offset = 0;
       }
 
       TLOG_DEBUG(4) << "Lookup pkt=" << pkt_idx << " ch=" << stream_chan
                     << " off_chan=" << off_chan
-                    << " dest0=(" << lookup[entry_base+0] << ","
-                    << lookup[entry_base+1] << ")"
-                    << " dest1=(" << lookup[entry_base+3] << ","
-                    << lookup[entry_base+4] << ")";
+                    << " dest0=(" << entry.dest[0].image_idx << ","
+                    << entry.dest[0].row << ")"
+                    << " dest1=(" << entry.dest[1].image_idx << ","
+                    << entry.dest[1].row << ")";
     }
   }
 
@@ -722,14 +707,14 @@ static inline uint16_t extract_adc(const uint8_t* adc_data,
 // 64 time-samples' ADC values to the correct pixel positions.
 
 static void scatter_adc_to_images_cpu(
-    const uint8_t*  adc_block,
-    const size_t*   adc_offsets,
-    const int32_t*  lookup,
-    uint16_t*       image_block,
-    uint32_t        packets_per_image_group,
-    uint32_t        num_image_groups,
-    uint16_t        columns,
-    uint32_t        pixels_per_image_set) 
+    const uint8_t*       adc_block,
+    const size_t*        adc_offsets,
+    const LookupEntry*   channel_to_wire_lut,
+    uint16_t*            image_block,
+    uint32_t             packets_per_image_group,
+    uint32_t             num_image_groups,
+    uint16_t             columns,
+    uint32_t             pixels_per_image_set)
 {
   TLOG_DEBUG(1) << "packets_per_image_group="<<packets_per_image_group
                 << " num_image_groups="<<num_image_groups
@@ -748,12 +733,11 @@ static void scatter_adc_to_images_cpu(
         const uint8_t* adc_data = adc_block + adc_offsets[global_pkt];
 
         for (uint16_t ch = 0; ch < kChannelsPerPacket; ++ch) {
-          int lk_base = (pkt_in_20 * kChannelsPerPacket + ch)
-                        * kDestsPerEntry * kFieldsPerDest;
+          const LookupEntry& entry = channel_to_wire_lut[pkt_in_20 * kChannelsPerPacket + ch];
 
           for (int d = 0; d < kDestsPerEntry; ++d) {
-            int32_t img_idx = lookup[lk_base + d * kFieldsPerDest + 0];
-            int32_t row     = lookup[lk_base + d * kFieldsPerDest + 1];
+            int32_t img_idx = entry.dest[d].image_idx;
+            int32_t row     = entry.dest[d].row;
             if (img_idx < 0) continue;
 
             uint32_t row_in_set = image_row_base(img_idx) + static_cast<uint32_t>(row);
@@ -1035,22 +1019,26 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
-    // ---- Build lookup table ---------------------------------------------
-    TLOG() << "Building lookup table... (of size " << kLookupTotalInts << " int32_t entries)";
-    int32_t* lookup = static_cast<int32_t*>(
-        std::malloc(static_cast<size_t>(kLookupTotalInts) * sizeof(int32_t)));
-    if (!lookup) {
-      TLOG_ERROR() << "ERROR: Failed to allocate lookup table\n";
+    // ---- Build channel-to-wire lookup table --------------------------------
+    TLOG() << "Building channel_to_wire_lut... ("
+           << kPacketsPerGroup << "x" << kChannelsPerPacket << " entries, "
+           << sizeof(LookupEntry) * kLookupEntries << " bytes)";
+    LookupEntry* channel_to_wire_lut = static_cast<LookupEntry*>(
+        std::malloc(sizeof(LookupEntry) * kLookupEntries));
+    if (!channel_to_wire_lut) {
+      TLOG_ERROR() << "ERROR: Failed to allocate channel_to_wire_lut\n";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images);
       return 1;
     }
 
-    if (!build_lookup_table(lookup, args.plugin)) {
+    if (!build_lookup_table(
+            reinterpret_cast<LookupEntry(*)[kChannelsPerPacket]>(channel_to_wire_lut),
+            args.plugin)) {
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
-      std::free(block5_images); std::free(lookup);
+      std::free(block5_images); std::free(channel_to_wire_lut);
       return 1;
     }
 
@@ -1061,7 +1049,7 @@ int main(int argc, char* argv[]) {
     if (args.use_gpu) {
 #ifdef HAVE_ICEBERG_GPU
       scatter_adc_to_images_gpu(
-          block4_adc, block3_adc_offsets, lookup, block5_images,
+          block4_adc, block3_adc_offsets, channel_to_wire_lut, block5_images,
           packets_per_image_group, num_image_groups,
           args.columns, pixels_per_image_set);
       TLOG() << "Scatter via gpu complete.\n";
@@ -1071,12 +1059,12 @@ int main(int argc, char* argv[]) {
                    << "  (i.e: ICEBERG_GPU= dbt-build -c)";
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
-      std::free(block5_images); std::free(lookup);
+      std::free(block5_images); std::free(channel_to_wire_lut);
       return 1;
 #endif
     } else {
       scatter_adc_to_images_cpu(
-          block4_adc, block3_adc_offsets, lookup, block5_images,
+          block4_adc, block3_adc_offsets, channel_to_wire_lut, block5_images,
           packets_per_image_group, num_image_groups,
           args.columns, pixels_per_image_set);
       TLOG() << "Scatter via cpu complete.\n";
@@ -1097,12 +1085,12 @@ int main(int argc, char* argv[]) {
                           args.output_dir, args.output_prefix)) {
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
-      std::free(block5_images); std::free(lookup);
+      std::free(block5_images); std::free(channel_to_wire_lut);
       return 1;
     }
 
     // ---- Cleanup --------------------------------------------------------
-    std::free(lookup);
+    std::free(channel_to_wire_lut);
     std::free(block1_headers);
     std::free(block2_hdr_offsets);
     std::free(block3_adc_offsets);
