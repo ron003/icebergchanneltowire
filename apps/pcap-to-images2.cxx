@@ -1036,7 +1036,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Build lookup table ---------------------------------------------
-    TLOG() << "Building lookup table...\n";
+    TLOG() << "Building lookup table... (of size " << kLookupTotalInts << " int32_t entries)";
     int32_t* lookup = static_cast<int32_t*>(
         std::malloc(static_cast<size_t>(kLookupTotalInts) * sizeof(int32_t)));
     if (!lookup) {
