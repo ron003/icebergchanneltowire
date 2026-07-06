@@ -38,6 +38,7 @@
 #include "PcapWriter.hpp"
 // detchannelmaps factory
 #include "detchannelmaps/TPCChannelMap.hpp"
+#include "PacketOrderMap.hpp"
 
 // raw::ChannelID_t type definition
 namespace raw {
@@ -269,6 +270,9 @@ private:
   // Key: plane*10 + tpc, Value: vector of offline channels (index = wire number)
   std::map<int, std::vector<unsigned int>> wire_to_offline_;
   unsigned int total_offline_channels_ = 0;
+
+  // Packet order derived from the channel map plugin
+  PacketOrderMap packet_order_;
 
   bool buildWireMapping();
   std::optional<raw::ChannelID_t> offlineChannelForWire(char plane_char,
@@ -674,6 +678,9 @@ bool ImagesTopcap::generatePcap() {
       throw std::runtime_error("Channel map is required for offline-channel-based packet generation");
     }
 
+    // Derive packet order from the channel map
+    packet_order_ = buildPacketOrderMap(*global_map);
+
     // Build the wire-to-offline-channel mapping from the channel map plugin
     if (!buildWireMapping()) {
       throw std::runtime_error("Failed to build wire-to-channel mapping");
@@ -821,7 +828,6 @@ bool ImagesTopcap::generatePcap() {
 
     constexpr uint16_t kPacketsPerGroup = 20;  // 1280 channels / 64 channels per packet
     constexpr unsigned int n_chan_per_stream = 64;
-    constexpr unsigned int n_slot_offset = 2;  // for ICEBERGChannelMap
 
     uint16_t const num_column_groups = common_columns_ / kTicksPerPacket;
     uint16_t sequence_id = 0;
@@ -864,16 +870,19 @@ bool ImagesTopcap::generatePcap() {
         }
 
         // Derive packet index, stream, and stream channel from coordinates
-        // (see detchannelmaps/apps/run_channel_map_api.cxx lines 87-113)
         unsigned int const out_stream_idx = (coords->channel / n_chan_per_stream) + (coords->fiber << 2);
         unsigned int const out_stream = ((coords->fiber & 0x1U) << 6) | ((coords->channel / n_chan_per_stream) & 0x3U);
         unsigned int const out_chan = coords->channel % n_chan_per_stream;
-        unsigned int const packet_index = ((coords->slot - n_slot_offset) << 3) + out_stream_idx;
 
-        if (packet_index >= kPacketsPerGroup) {
-          TLOG_ERROR() << "Packet index " << packet_index << " out of range for channel " << off_chan;
+        uint32_t const key = encodeSlotStreamIdx(static_cast<uint16_t>(coords->slot), out_stream_idx);
+        auto it = packet_order_.reverse.find(key);
+        if (it == packet_order_.reverse.end()) {
+          TLOG_ERROR() << "No packet index for slot=" << coords->slot
+                       << " stream_idx=" << out_stream_idx
+                       << " (offline channel " << off_chan << ")";
           return false;
         }
+        unsigned int const packet_index = it->second;
 
         WIBEthFrame& frame = frames[packet_index];
         // Set header fields from first channel encountered in this packet

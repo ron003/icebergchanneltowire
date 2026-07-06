@@ -158,6 +158,7 @@ support this directly, both TPCChannelMap and IcebergWireChannelMap will be need
 #include "PcapReader.hpp"
 #include "detchannelmaps/TPCChannelMap.hpp"
 #include "ScatterLookupTable.h"
+#include "PacketOrderMap.hpp"
 
 // ---------------------------------------------------------------------------
 // GPU kernel entry point (defined in pcap-to-images2-kernel.cu)
@@ -206,20 +207,8 @@ static constexpr uint16_t kRowsV = 315;
 static constexpr uint16_t kRowsZ = 240;
 static constexpr uint32_t kRowsPerImageSet  = 2*kRowsU + 2*kRowsV + 2*kRowsZ;        // 1752
 
-// Expected packet ordering within a group of 20 (crate, slot, stream)
-struct PacketPattern {
-  uint16_t crate;
-  uint16_t slot;
-  uint16_t stream;
-};
-
-static constexpr PacketPattern kExpectedOrder[20] = {
-  {8, 2,  0}, {8, 2,  1}, {8, 2,  2}, {8, 2,  3},
-  {8, 2, 64}, {8, 2, 65}, {8, 2, 66}, {8, 2, 67},
-  {8, 3,  0}, {8, 3,  1}, {8, 3,  2}, {8, 3,  3},
-  {8, 3, 64}, {8, 3, 65}, {8, 3, 66}, {8, 3, 67},
-  {8, 4,  0}, {8, 4,  1}, {8, 4,  2}, {8, 4,  3},
-};
+// Expected packet ordering is derived at runtime from the channel map plugin
+// via buildPacketOrderMap() in PacketOrderMap.hpp.
 
 // Lookup table dimensions are defined in ScatterLookupTable.h:
 //   kLookupEntries (1280 = 20 packets x 64 channels)
@@ -398,21 +387,8 @@ static unsigned int tpc_for_image(int image_idx) {
 
 static bool build_lookup_table(
     LookupEntry  channel_to_wire_lut[kPacketsPerGroup][kChannelsPerPacket],
-    const std::string& plugin_name) {
-
-  // Load the detchannelmaps plugin for crate/slot/stream -> offline channel
-  std::shared_ptr<dunedaq::detchannelmaps::TPCChannelMap> chan_map;
-  try {
-    chan_map = dunedaq::detchannelmaps::make_map(plugin_name);
-  } catch (const std::exception& e) {
-    std::cerr << "ERROR: Failed to load channel map plugin '" << plugin_name
-              << "': " << e.what() << "\n";
-    return false;
-  }
-  if (!chan_map) {
-    std::cerr << "ERROR: Channel map plugin returned null\n";
-    return false;
-  }
+    dunedaq::detchannelmaps::TPCChannelMap& chan_map,
+    const PacketPattern* expected_order) {
 
   // IcebergWireChannelMap for offline_channel -> (plane, tpc, wire)
   geo::IcebergWireChannelMap geom_map;
@@ -422,14 +398,14 @@ static bool build_lookup_table(
               sizeof(LookupEntry) * kPacketsPerGroup * kChannelsPerPacket);
 
   for (int pkt_idx = 0; pkt_idx < kPacketsPerGroup; ++pkt_idx) {
-    uint16_t crate  = kExpectedOrder[pkt_idx].crate;
-    uint16_t slot   = kExpectedOrder[pkt_idx].slot;
-    uint16_t stream = kExpectedOrder[pkt_idx].stream;
+    uint16_t crate  = expected_order[pkt_idx].crate;
+    uint16_t slot   = expected_order[pkt_idx].slot;
+    uint16_t stream = expected_order[pkt_idx].stream;
 
     for (uint16_t stream_chan = 0; stream_chan < kChannelsPerPacket; ++stream_chan) {
 
       // crate/slot/stream/stream_chan -> offline channel
-      uint32_t off_chan = chan_map->get_offline_channel_from_crate_slot_stream_chan(
+      uint32_t off_chan = chan_map.get_offline_channel_from_crate_slot_stream_chan(
           crate, slot, stream, stream_chan);
 
       if (off_chan >= kTotalChannels) {
@@ -589,7 +565,8 @@ static uint32_t pad_to_min_packets(
 static bool validate_packets(const uint8_t* header_block,
                               const size_t*  header_offsets,
                               uint32_t total_packets,
-                              bool verbose) {
+                              bool verbose,
+                              const PacketPattern* expected_order) {
   if (total_packets == 0) {
     std::cerr << "ERROR: No packets read\n";
     return false;
@@ -621,7 +598,7 @@ static bool validate_packets(const uint8_t* header_block,
       uint64_t ts     = daq_hdr->get_timestamp();
 
       // Verify crate/slot/stream against expected pattern
-      const auto& exp = kExpectedOrder[p];
+      const auto& exp = expected_order[p];
       if (crate != exp.crate || slot != exp.slot || stream != exp.stream) {
         std::cerr << "ERROR: Packet " << pkt_idx
                   << " (group " << g << ", pos " << p << ")"
@@ -845,6 +822,22 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
+    // ---- Load channel map and derive packet order -------------------------
+    std::shared_ptr<dunedaq::detchannelmaps::TPCChannelMap> chan_map;
+    try {
+      chan_map = dunedaq::detchannelmaps::make_map(args.plugin);
+    } catch (const std::exception& e) {
+      std::cerr << "ERROR: Failed to load channel map plugin '" << args.plugin
+                << "': " << e.what() << "\n";
+      return 1;
+    }
+    if (!chan_map) {
+      std::cerr << "ERROR: Channel map plugin returned null\n";
+      return 1;
+    }
+    PacketOrderMap packet_order = buildPacketOrderMap(*chan_map);
+    const PacketPattern* expected_order = packet_order.order.data();
+
     // ---- Derived constants ----------------------------------------------
     uint16_t col_groups_per_image     = args.columns / kTicksPerPacket;             // cols/64
     uint32_t packets_per_image_group  = static_cast<uint32_t>(kPacketsPerGroup)
@@ -1015,7 +1008,7 @@ int main(int argc, char* argv[]) {
     // ---- Validate all groups of 20 -------------------------------------
     TLOG() << "Validating packet groups...\n";
     if (!validate_packets(block1_headers, block2_hdr_offsets,
-                          total_packets, args.verbose)) {
+                          total_packets, args.verbose, expected_order)) {
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images);
@@ -1038,7 +1031,7 @@ int main(int argc, char* argv[]) {
 
     if (!build_lookup_table(
             reinterpret_cast<LookupEntry(*)[kChannelsPerPacket]>(channel_to_wire_lut),
-            args.plugin)) {
+            *chan_map, expected_order)) {
       std::free(block1_headers); std::free(block2_hdr_offsets);
       std::free(block3_adc_offsets); std::free(block4_adc);
       std::free(block5_images); std::free(channel_to_wire_lut);
