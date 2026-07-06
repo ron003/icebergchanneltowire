@@ -918,7 +918,7 @@ bool ImagesTopcap::generatePcap() {
                       << ", timestamp=" << frame_timestamp
                       << ", sequence_id=" << (sequence_id + pkt_idx) << ")";
 
-        pcap.writePacket(packet_data.data(), packet_data.size());
+        pcap.writePacket(packet_data.data(), packet_data.size(),10000000 + frame_timestamp);  // Use timestamp in nanoseconds
       }
       sequence_id += kPacketsPerGroup;
     }
